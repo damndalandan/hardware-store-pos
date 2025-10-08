@@ -1,6 +1,25 @@
 # Hardware Store POS System
 
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)
+![React](https://img.shields.io/badge/React-18-61dafb.svg)
+
 A comprehensive web-based Point of Sale system designed specifically for hardware stores, featuring real-time inventory management, barcode integration, offline support, and multi-device accessibility.
+
+---
+
+## 📋 Table of Contents
+
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Project Structure](#-project-structure)
+- [Getting Started](#-getting-started)
+- [Usage](#-usage)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
 
 ## 🚀 Features
 
@@ -287,24 +306,32 @@ Import products from Excel CSV files with robust error handling, support for mul
 
 ## 🤝 Contributing
 
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-## 📄 License
+## 📝 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🆘 Support
+## 👥 Authors
 
-For support and questions:
-- Check the documentation in the `/docs` folder
-- Review the API endpoints and examples
-- Check the troubleshooting guide
-- Create an issue in the repository
+- **damndalandan** - *Initial work* - [damndalandan](https://github.com/damndalandan)
+
+## 🙏 Acknowledgments
+
+- Built with React, TypeScript, Node.js, and Material-UI
+- Inspired by modern retail POS systems
+- Special thanks to all contributors
+
+## 📧 Support
+
+For support, please open an issue in the [GitHub issue tracker](https://github.com/damndalandan/hardware-store-pos/issues).
 
 ---
 
-**Hardware Store POS System** - Built for efficiency, designed for growth.
+**Made with ❤️ for hardware stores**
