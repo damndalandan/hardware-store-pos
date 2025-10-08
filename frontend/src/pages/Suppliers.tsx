@@ -1,0 +1,1472 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Box, Typography, Button, TextField, Grid, Card, CardContent, Dialog, DialogTitle,
+  DialogContent, DialogActions, Select, MenuItem, FormControl, InputLabel,
+  Chip, Alert, Snackbar, Tooltip, IconButton, Tab, Tabs, Paper,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  Accordion, AccordionSummary, AccordionDetails, Divider, LinearProgress,
+  Menu, MenuItem as MuiMenuItem, Checkbox, List, ListItem, RadioGroup, FormControlLabel, Radio
+} from '@mui/material';
+import {
+  Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon, Search as SearchIcon,
+  Download as DownloadIcon, Upload as UploadIcon, Refresh as RefreshIcon,
+  Business as BusinessIcon, Analytics as AnalyticsIcon, History as HistoryIcon,
+  ExpandMore as ExpandMoreIcon, TrendingUp as TrendingUpIcon,
+  Assessment as ReportIcon, ContactMail as ContactIcon, Phone as PhoneIcon,
+  Email as EmailIcon, Language as WebsiteIcon, Close as CloseIcon
+} from '@mui/icons-material';
+import { DataGrid, GridColDef, GridRowSelectionModel } from '@mui/x-data-grid';
+import dataGridStickySx from '../utils/dataGridSticky';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import axios from 'axios';
+import { saveAs } from 'file-saver';
+import { useAuth } from '../contexts/AuthContext';
+
+interface Supplier {
+  id: number;
+  name: string;
+  contact_person?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
+  country?: string;
+  tax_id?: string;
+  website?: string;
+  notes?: string;
+  payment_terms?: string;
+  credit_limit?: number;
+  is_active: boolean;
+  total_orders: number;
+  pending_orders: number;
+  total_purchased: number;
+  last_order_date?: string;
+  product_count: number;
+  created_at: string;
+}
+
+interface SupplierDetail extends Supplier {
+  recentOrders: Array<{
+    id: number;
+    order_number: string;
+    order_date: string;
+    status: string;
+    total_amount: number;
+  }>;
+  products: Array<{
+    id: number;
+    name: string;
+    sku: string;
+    brand?: string;
+    selling_price: number;
+    cost_price: number;
+    is_active: boolean;
+  }>;
+}
+
+interface Analytics {
+  summary: {
+    total_orders: number;
+    total_spent: number;
+    average_order: number;
+    active_suppliers: number;
+    period: { start_date: string; end_date: string };
+  };
+  topSuppliers: Array<{
+    name: string;
+    city?: string;
+    state?: string;
+    order_count: number;
+    total_spent: number;
+    average_order: number;
+    last_order_date: string;
+  }>;
+  monthlyTrend: Array<{
+    month: string;
+    order_count: number;
+    total_spent: number;
+  }>;
+  performance: Array<{
+    name: string;
+    total_orders: number;
+    avg_delivery_days: number;
+    completion_rate: number;
+  }>;
+}
+
+const Suppliers: React.FC = () => {
+  const { user } = useAuth();
+  // Styling constants copied from Inventory for parity
+  const headerCellSx = { py: 1, fontWeight: 600, fontSize: 13 } as const;
+  const cellSx = { py: 1, fontSize: 13 } as const;
+  // Single-line truncate style for table cells
+  const truncateSx = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } as const;
+  const [activeTab, setActiveTab] = useState(0);
+  // dynamic supplier tabs: each tab shows products for a supplier
+  const [supplierTabs, setSupplierTabs] = useState<Array<{ id: number; name: string }>>([]);
+  const [activeSupplierTabIndex, setActiveSupplierTabIndex] = useState<number | null>(null);
+  const [supplierProducts, setSupplierProducts] = useState<Record<number, SupplierDetail['products']>>({});
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<GridRowSelectionModel>([]);
+  
+  // Dialog states
+  const [supplierDialog, setSupplierDialog] = useState(false);
+  const [detailDialog, setDetailDialog] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState(false);
+  const [importDialog, setImportDialog] = useState(false);
+  
+  // Form states
+  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | SupplierDetail | null>(null);
+  const isSupplierDetail = (s: Supplier | SupplierDetail | null): s is SupplierDetail => {
+    return !!s && (s as SupplierDetail).recentOrders !== undefined && (s as SupplierDetail).products !== undefined;
+  };
+  const [editingSupplier, setEditingSupplier] = useState<Partial<Supplier> | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [cityFilter, setCityFilter] = useState('all');
+  const [stateFilter, setStateFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [startDate, setStartDate] = useState<Date | null>(new Date(new Date().setDate(new Date().getDate() - 30)));
+  const [endDate, setEndDate] = useState<Date | null>(new Date());
+  
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalSuppliers, setTotalSuppliers] = useState(0);
+  
+  // Import states
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importStatus, setImportStatus] = useState<'idle' | 'validating' | 'importing' | 'complete' | 'error'>('idle');
+  const [importResults, setImportResults] = useState<any>(null);
+  
+  // Notifications
+  const [snackbar, setSnackbar] = useState<{open: boolean; message: string; severity: 'success' | 'error' | 'warning' | 'info'}>({
+    open: false,
+    message: '',
+    severity: 'success'
+  });
+
+  const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api';
+
+  // Column customization state (Inventory-style)
+  const defaultColumnOrder = ['name','contact_person','email','phone','city','state','total_orders','total_purchased','last_order_date','is_active','actions'];
+
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem('suppliers_visible_columns');
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    // default: show all except actions handled separately
+    const map: Record<string, boolean> = {};
+    defaultColumnOrder.forEach(k => map[k] = k !== 'actions');
+    map['actions'] = true;
+    return map;
+  });
+
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('suppliers_column_order');
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return defaultColumnOrder;
+  });
+
+  const persistColumns = (vis: Record<string, boolean>, order: string[]) => {
+    try {
+      localStorage.setItem('suppliers_visible_columns', JSON.stringify(vis));
+      localStorage.setItem('suppliers_column_order', JSON.stringify(order));
+    } catch (e) {}
+  };
+
+  // Drag-and-drop for column reordering (native)
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  const onDragStart = (e: React.DragEvent, id: string) => {
+    setDraggingId(id);
+    try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); } catch (err) {}
+  };
+
+  const onDragOver = (e: React.DragEvent, overId: string) => {
+    e.preventDefault();
+    if (!draggingId || draggingId === overId) return;
+    const from = columnOrder.indexOf(draggingId);
+    const to = columnOrder.indexOf(overId);
+    if (from === -1 || to === -1) return;
+    const newOrder = [...columnOrder];
+    newOrder.splice(from, 1);
+    newOrder.splice(to, 0, draggingId);
+    setColumnOrder(newOrder);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDraggingId(null);
+    persistColumns(visibleColumns, columnOrder);
+  };
+
+  const onDragEndNative = () => {
+    setDraggingId(null);
+    persistColumns(visibleColumns, columnOrder);
+  };
+
+  const toggleColumn = (key: string) => {
+    const next = { ...visibleColumns, [key]: !visibleColumns[key] };
+    setVisibleColumns(next);
+    persistColumns(next, columnOrder);
+  };
+
+  const setAllColumns = (val: boolean) => {
+    const next: Record<string, boolean> = {};
+    columnOrder.forEach(k => next[k] = val || k === 'actions');
+    setVisibleColumns(next);
+    persistColumns(next, columnOrder);
+  };
+
+  const setDefaultColumns = () => {
+    const next: Record<string, boolean> = {};
+    defaultColumnOrder.forEach(k => next[k] = k !== 'actions');
+    next['actions'] = true;
+    setVisibleColumns(next);
+    setColumnOrder(defaultColumnOrder);
+    persistColumns(next, defaultColumnOrder);
+  };
+
+  const resetColumnOrderToDefault = () => {
+    setColumnOrder(defaultColumnOrder);
+    persistColumns(visibleColumns, defaultColumnOrder);
+  };
+
+  // Columns menu state
+  const [columnsMenuAnchor, setColumnsMenuAnchor] = useState<null | HTMLElement>(null);
+  const columnsMenuOpen = Boolean(columnsMenuAnchor);
+  const openColumnsMenu = (e: React.MouseEvent<HTMLElement>) => setColumnsMenuAnchor(e.currentTarget);
+  const closeColumnsMenu = () => setColumnsMenuAnchor(null);
+
+  const fetchSuppliers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('limit', '25');
+      
+      if (searchTerm) params.append('search', searchTerm);
+      if (cityFilter !== 'all') params.append('city', cityFilter);
+      if (stateFilter !== 'all') params.append('state', stateFilter);
+      if (statusFilter !== 'all') {
+        // Map statusFilter values to backend expected values
+        const isActiveValue = statusFilter === 'active' ? 'true' : statusFilter === 'inactive' ? 'false' : 'all';
+        if (isActiveValue !== 'all') params.append('is_active', isActiveValue);
+      }
+      
+      // Add timestamp to bust cache
+      params.append('_t', Date.now().toString());
+      
+      const response = await axios.get(`/api/suppliers?${params}`, {
+        // Force fresh data, bypass cache
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      });
+      
+      if (response.data && typeof response.data === 'object') {
+        const suppliersData = response.data.suppliers || [];
+        setSuppliers(suppliersData);
+        setTotalPages(response.data.pagination?.pages || 1);
+        setTotalSuppliers(response.data.pagination?.total || 0);
+      } else {
+        console.error('Invalid response format:', response.data);
+        setSuppliers([]);
+      }
+    } catch (error) {
+  console.error('Error fetching suppliers:', error);
+  console.error('Error details:', axios.isAxiosError(error) ? error.response?.data : undefined);
+  showNotification(`Failed to fetch suppliers: ${axios.isAxiosError(error) ? error.message : String(error)}`, 'error');
+      setSuppliers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, searchTerm, cityFilter, stateFilter, statusFilter]);
+
+  const fetchAnalytics = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (startDate) params.append('start_date', startDate.toISOString().split('T')[0]);
+      if (endDate) params.append('end_date', endDate.toISOString().split('T')[0]);
+      
+      const response = await axios.get(`/api/suppliers/analytics/summary?${params}`);
+      setAnalytics(response.data);
+    } catch (error) {
+      showNotification('Failed to fetch analytics', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [startDate, endDate]);
+
+  useEffect(() => {
+    if (activeTab === 0) fetchSuppliers();
+    else if (activeTab === 1) fetchAnalytics();
+  }, [activeTab, fetchSuppliers, fetchAnalytics]);
+
+  // Utility functions
+  const showNotification = (message: string, severity: 'success' | 'error' | 'warning' | 'info' = 'success') => {
+    setSnackbar({ open: true, message, severity });
+  };
+
+  const formatCurrency = (amount: number | string) => `$${Number(amount || 0).toFixed(2)}`;
+  const formatDate = (dateStr: string) => new Date(dateStr).toLocaleDateString();
+
+  const resetForm = () => {
+    setEditingSupplier(null);
+    setSelectedSupplier(null);
+  };
+
+  // CRUD operations
+  const fetchSupplierDetail = async (supplierId: number) => {
+    try {
+      setLoading(true);
+      const response = await axios.get(`${API_BASE_URL}/suppliers/${supplierId}`);
+      setSelectedSupplier(response.data);
+      setDetailDialog(true);
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Failed to fetch supplier details';
+      showNotification(message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openSupplierTab = async (supplierId: number, supplierName: string) => {
+    // If already open, switch to it
+    const existingIndex = supplierTabs.findIndex(s => s.id === supplierId);
+    if (existingIndex !== -1) {
+      setActiveSupplierTabIndex(existingIndex);
+      setActiveTab(2); // switch to supplier tabs area (we'll render at index 2)
+      return;
+    }
+
+    // add to tabs
+    const next = [...supplierTabs, { id: supplierId, name: supplierName }];
+    setSupplierTabs(next);
+    const newIndex = next.length - 1;
+    setActiveSupplierTabIndex(newIndex);
+    setActiveTab(2);
+
+    // fetch supplier details (includes products) from existing backend endpoint
+    try {
+      setLoading(true);
+      const resp = await axios.get(`${API_BASE_URL}/suppliers/${supplierId}`);
+      setSupplierProducts(prev => ({ ...prev, [supplierId]: resp.data.products || [] }));
+    } catch (err) {
+      console.error('Failed to fetch supplier products', err);
+      showNotification('Failed to fetch supplier products', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const closeSupplierTab = (index: number) => {
+    const next = [...supplierTabs];
+    const removed = next.splice(index, 1)[0];
+    setSupplierTabs(next);
+    // remove cached products
+    setSupplierProducts(prev => {
+      const copy = { ...prev };
+      delete copy[removed.id];
+      return copy;
+    });
+    // adjust active index
+    if (next.length === 0) {
+      setActiveSupplierTabIndex(null);
+      setActiveTab(0);
+    } else if (index <= (activeSupplierTabIndex ?? -1)) {
+      const newIndex = Math.max(0, (activeSupplierTabIndex ?? 1) - 1);
+      setActiveSupplierTabIndex(newIndex);
+      setActiveTab(2);
+    }
+  };
+
+  const handleSaveSupplier = async () => {
+    if (!editingSupplier) return;
+
+    try {
+      setLoading(true);
+      
+      if (!editingSupplier.name?.trim()) {
+        showNotification('Supplier name is required', 'error');
+        return;
+      }
+
+      const supplierData = {
+        name: editingSupplier.name.trim(),
+        contactPerson: editingSupplier.contact_person?.trim() || '',
+        email: editingSupplier.email?.trim() || '',
+        phone: editingSupplier.phone?.trim() || '',
+        address: editingSupplier.address?.trim() || '',
+        city: editingSupplier.city?.trim() || '',
+        state: editingSupplier.state?.trim() || '',
+        zipCode: editingSupplier.zip_code?.trim() || '',
+        country: editingSupplier.country?.trim() || '',
+        taxId: editingSupplier.tax_id?.trim() || '',
+        website: editingSupplier.website?.trim() || '',
+        notes: editingSupplier.notes?.trim() || '',
+        paymentTerms: editingSupplier.payment_terms?.trim() || '',
+        creditLimit: editingSupplier.credit_limit || 0,
+        isActive: editingSupplier.is_active !== false
+      };
+
+      if (editingSupplier.id) {
+        // Update existing supplier
+        await axios.put(`/api/suppliers/${editingSupplier.id}`, supplierData);
+        showNotification('Supplier updated successfully');
+      } else {
+        // Create new supplier
+        await axios.post('/api/suppliers', supplierData);
+        showNotification('Supplier created successfully');
+      }
+
+      setSupplierDialog(false);
+      resetForm();
+      // Force refresh with cache busting
+      setTimeout(() => {
+        fetchSuppliers();
+      }, 100);
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Failed to save supplier';
+      showNotification(message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteSupplier = async () => {
+    if (!selectedSupplier) return;
+    setLoading(true);
+    try {
+      await axios.delete(`/api/suppliers/${selectedSupplier.id}`);
+      showNotification('Supplier deleted successfully');
+      setDeleteDialog(false);
+      setSelectedSupplier(null);
+      fetchSuppliers();
+    } catch (error) {
+      let message = 'Failed to delete supplier';
+      if (axios.isAxiosError(error)) {
+        console.error('Delete supplier error:', error.response);
+        message = error.response?.data?.message || error.message || message;
+      } else if (error instanceof Error) {
+        console.error('Delete supplier error:', error);
+        message = error.message;
+      } else {
+        console.error('Unknown error deleting supplier:', error);
+      }
+      showNotification(message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Export function
+  const handleExport = async (format: 'csv' | 'excel', includeStats = false) => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams();
+      
+      if (statusFilter !== 'all') params.append('is_active', statusFilter);
+      params.append('include_stats', includeStats.toString());
+      
+      const response = await axios.get(`${API_BASE_URL}/suppliers/export/${format}?${params}`, {
+        responseType: 'blob'
+      });
+      
+      const blob = new Blob([response.data]);
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+      const filename = `suppliers-export-${timestamp}.${format === 'excel' ? 'xlsx' : 'csv'}`;
+      saveAs(blob, filename);
+      
+      showNotification(`Suppliers exported successfully`);
+    } catch (error) {
+      showNotification('Failed to export suppliers', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Data Grid columns
+  const supplierColumns: GridColDef[] = [
+    {
+      field: 'name',
+      headerName: 'Company Name',
+      width: 200,
+      renderCell: (params) => (
+        <Button
+          variant="text"
+          color="primary"
+          onClick={() => fetchSupplierDetail(params.row.id)}
+          style={{ textTransform: 'none' }}
+        >
+          {params.value}
+        </Button>
+      ),
+      disableColumnMenu: true
+    },
+      { field: 'contact_person', headerName: 'Contact', width: 150, disableColumnMenu: true },
+      { field: 'email', headerName: 'Email', width: 180, disableColumnMenu: true },
+      { field: 'phone', headerName: 'Phone', width: 130, disableColumnMenu: true },
+      { field: 'city', headerName: 'City', width: 120, disableColumnMenu: true },
+      { field: 'state', headerName: 'State', width: 100, disableColumnMenu: true },
+      { 
+        field: 'total_orders', 
+        headerName: 'Orders', 
+        width: 80,
+        type: 'number',
+        disableColumnMenu: true
+      },
+      { 
+        field: 'total_purchased', 
+        headerName: 'Total Spent', 
+        width: 120,
+        type: 'number',
+        valueFormatter: (params) => formatCurrency(params.value || 0),
+        disableColumnMenu: true
+      },
+      { 
+        field: 'last_order_date', 
+        headerName: 'Last Order', 
+        width: 120,
+        valueFormatter: (params) => params.value ? formatDate(params.value) : 'Never',
+        disableColumnMenu: true
+      },
+      {
+        field: 'is_active',
+        headerName: 'Status',
+        width: 100,
+        renderCell: (params) => (
+          <Chip 
+            label={params.value ? 'Active' : 'Inactive'}
+            color={params.value ? 'success' : 'default'}
+            size="small"
+          />
+        ),
+        disableColumnMenu: true
+      },
+      {
+        field: 'actions',
+        headerName: 'Actions',
+        width: 160,
+        sortable: false,
+        renderCell: (params) => (
+          <Box>
+            <Tooltip title="Edit">
+              <IconButton
+                size="small"
+                onClick={() => {
+                  setEditingSupplier(params.row);
+                  setSupplierDialog(true);
+                }}
+                disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+              >
+                <EditIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Delete">
+              <IconButton
+                size="small"
+                onClick={() => {
+                  setSelectedSupplier(params.row);
+                  setDeleteDialog(true);
+                }}
+                disabled={!user || user.role !== 'admin'}
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        ),
+        disableColumnMenu: false
+      }
+  ];
+
+  return (
+    <LocalizationProvider dateAdapter={AdapterDateFns}>
+    <Box
+      sx={{
+        p: 3,
+        backgroundColor: '#f7f8fA',
+        minHeight: '100vh',
+        '&, & *': { fontSize: '14px !important' },
+        '& .MuiTypography-root': { fontSize: '14px !important' },
+        '& .MuiTableCell-root': { fontSize: '14px !important' },
+        '& .MuiButton-root': { fontSize: '14px !important' },
+        '& .MuiInputBase-root': { fontSize: '14px !important' },
+        '& .MuiDataGrid-root .MuiDataGrid-cell, & .MuiDataGrid-root .MuiDataGrid-columnHeader': { fontSize: '14px !important' }
+      }}
+    >
+        {/* Tabs */}
+        <Box sx={{ mb: 3 }}>
+          <Tabs
+            value={activeTab}
+            onChange={(e, newValue) => {
+              setActiveTab(newValue);
+              if (newValue >= 2) {
+                setActiveSupplierTabIndex(newValue - 2);
+              } else {
+                setActiveSupplierTabIndex(null);
+              }
+            }}
+            sx={{ '& .MuiTab-root': { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }}
+          >
+            <Tab label="Supplier Directory" icon={<BusinessIcon />} sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
+            <Tab label="Analytics & Performance" icon={<AnalyticsIcon />} sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
+            {supplierTabs.map((s, idx) => (
+              <Tab
+                key={s.id}
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography sx={{ maxWidth: 160, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</Typography>
+                    <IconButton size="small" onClick={(ev) => { ev.stopPropagation(); closeSupplierTab(idx); }} aria-label={`Close ${s.name}`}>
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                }
+                sx={{ textTransform: 'none' }}
+              />
+            ))}
+          </Tabs>
+        </Box>
+
+        {/* Toolbar (only show on Supplier Directory tab) */}
+        {activeTab === 0 && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Grid container spacing={2} alignItems="center">
+              <Grid item xs={12} md={3}>
+                <TextField
+                  fullWidth
+                  placeholder="Search suppliers..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  InputProps={{
+                    startAdornment: <SearchIcon sx={{ mr: 1, color: 'action.active' }} />
+                  }}
+                />
+              </Grid>
+              <Grid item xs={12} md={2}>
+                <FormControl fullWidth>
+                  <InputLabel>Status</InputLabel>
+                  <Select
+                    value={statusFilter}
+                    label="Status"
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                  >
+                    <MenuItem value="all">All</MenuItem>
+                    <MenuItem value="true">Active</MenuItem>
+                    <MenuItem value="false">Inactive</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} md={7}>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  <Button
+                    variant="contained"
+                    startIcon={<AddIcon />}
+                    onClick={() => {
+                      setEditingSupplier({ is_active: true });
+                      setSupplierDialog(true);
+                    }}
+                    disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+                  >
+                    Add Supplier
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<UploadIcon />}
+                    onClick={() => setImportDialog(true)}
+                    disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+                  >
+                    Import
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<DownloadIcon />}
+                    onClick={() => handleExport('csv')}
+                    disabled={loading}
+                  >
+                    Export CSV
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<DownloadIcon />}
+                    onClick={() => handleExport('excel')}
+                    disabled={loading}
+                  >
+                    Export Excel
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<RefreshIcon />}
+                    onClick={() => {
+                      if (activeTab === 0) fetchSuppliers();
+                      else if (activeTab === 1) fetchAnalytics();
+                    }}
+                    disabled={loading}
+                  >
+                    Refresh
+                  </Button>
+                </Box>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+        )}
+
+        {/* Content based on active tab */}
+        {activeTab === 0 && (
+          <Card>
+            <Box>
+              <Paper sx={{ p: 2, borderRadius: 2, bgcolor: '#fff', mb: 2, boxShadow: 'none' }} elevation={0}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="subtitle1" sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Supplier Directory</Typography>
+                  <Box>
+                    <Tooltip title="Customize columns">
+                      <IconButton size="small" onClick={openColumnsMenu}>
+                        <ExpandMoreIcon />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                </Box>
+
+                <TableContainer sx={{
+                  border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden'
+                }}>
+                  <Box sx={{
+                    maxHeight: 600,
+                    overflow: 'auto',
+                    '&::-webkit-scrollbar': { width: 1, height: 1 },
+                    '&::-webkit-scrollbar-track': { background: 'transparent' },
+                    '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.28)', borderRadius: 999, minHeight: 20 },
+                    scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,0,0,0.28) transparent'
+                  }}>
+                    <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 48 }, '& .MuiTableRow-root': { height: 48 } }}>
+                      <TableHead>
+                        <TableRow sx={{ height: 48 }}>
+                          <TableCell sx={{ ...headerCellSx, py: 0.5, width: 48 }}>
+                            <Checkbox
+                              checked={suppliers.length > 0 && selectedItems.length === suppliers.length}
+                              indeterminate={selectedItems.length > 0 && selectedItems.length < suppliers.length}
+                              onChange={() => {
+                                if (selectedItems.length === suppliers.length) setSelectedItems([]);
+                                else setSelectedItems(suppliers.map(s => s.id));
+                              }}
+                              inputProps={{ 'aria-label': 'select all suppliers' }}
+                            />
+                          </TableCell>
+
+                          {columnOrder.map(col => {
+                            // the 'actions' column is rendered as a special sticky cell at the far right;
+                            // skip it when iterating columnOrder so we don't render a duplicate scrollable Actions column
+                            if (col === 'actions') return null;
+                            if (!visibleColumns[col]) return null;
+                            const rawLabel = col.replace(/_/g, ' ');
+                            const label = rawLabel.replace(/\b\w/g, (m: string) => m.toUpperCase());
+                            return (
+                              <TableCell key={col} sx={{ ...headerCellSx, py: 0.5, ...truncateSx }}>
+                                {label === 'Name' ? 'Company Name' : label}
+                              </TableCell>
+                            );
+                          })}
+
+                          <TableCell sx={{
+                            top: 0,
+                            position: 'sticky',
+                            right: 0,
+                            backgroundColor: '#f7f7f7',
+                            zIndex: 1200,
+                            borderLeft: '1px solid', borderColor: 'divider',
+                            whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pr: 0, py: 0.5,
+                            height: 48,
+                            minHeight: 48,
+                            width: 120,
+                            '& .MuiIconButton-root': { height: 32, width: 32, p: 0 }
+                          }}>
+                            <Box sx={{ mr: 1 }}>Actions</Box>
+                            <IconButton size="small" onClick={openColumnsMenu} sx={{ p: 0 }} aria-label="Columns">
+                              {/* use same vertical more icon as Inventory */}
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>
+                            </IconButton>
+                          </TableCell>
+                        </TableRow>
+                      </TableHead>
+
+                      <TableBody>
+                        {suppliers.length === 0 && !loading && (
+                          <TableRow>
+                            <TableCell colSpan={columnOrder.filter(col => visibleColumns[col]).length + 2} sx={{ textAlign: 'center', py: 4 }}>
+                              <Typography variant="body1" color="text.secondary">
+                                No suppliers found
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                                {statusFilter === 'active' ? 'No active suppliers' : 'No suppliers match your criteria'}
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        {suppliers.map(item => (
+                          <TableRow key={item.id} hover sx={{ height: 48 }}>
+                            <TableCell sx={{ ...cellSx, py: 0.5 }}>
+                              <Checkbox
+                                checked={(selectedItems as number[]).includes(item.id)}
+                                onChange={() => {
+                                  setSelectedItems(prev => {
+                                    const set = new Set(prev as number[]);
+                                    if (set.has(item.id)) set.delete(item.id);
+                                    else set.add(item.id);
+                                    return Array.from(set);
+                                  });
+                                }}
+                                inputProps={{ 'aria-label': `select ${item.name}` }}
+                              />
+                            </TableCell>
+
+                            {columnOrder.map(col => {
+                              if (!visibleColumns[col]) return null;
+                              switch (col) {
+                                case 'name':
+                                  return (
+                                    <TableCell key={col} sx={{ ...cellSx, py: 0.5, ...truncateSx }}>
+                                            <Button
+                                              variant="text"
+                                              color="primary"
+                                              onClick={() => openSupplierTab(item.id, item.name)}
+                                              sx={{ textTransform: 'none', p: 0, minWidth: 0, justifyContent: 'flex-start', ...truncateSx }}
+                                              title={item.name}
+                                            >
+                                              {item.name}
+                                            </Button>
+                                    </TableCell>
+                                  );
+                                case 'contact_person':
+                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.contact_person}</TableCell>;
+                                case 'email':
+                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.email}</TableCell>;
+                                case 'phone':
+                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.phone}</TableCell>;
+                                case 'city':
+                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.city}</TableCell>;
+                                case 'state':
+                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.state}</TableCell>;
+                                case 'total_orders':
+                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.total_orders}</TableCell>;
+                                case 'total_purchased':
+                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{formatCurrency(item.total_purchased || 0)}</TableCell>;
+                                case 'last_order_date':
+                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.last_order_date ? formatDate(item.last_order_date) : 'Never'}</TableCell>;
+                                case 'is_active':
+                                  return (
+                                    <TableCell key={col} sx={cellSx}>
+                                      <Chip label={item.is_active ? 'Active' : 'Inactive'} color={item.is_active ? 'success' : 'default'} size="small" />
+                                    </TableCell>
+                                  );
+                                default:
+                                  return null;
+                              }
+                            })}
+
+                            <TableCell sx={{
+                              position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1300, borderLeft: '1px solid', borderColor: 'divider', py: 0.5,
+                              display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'center', '& .MuiIconButton-root': { height: 32, width: 32, p: 0 },
+                                // keep action cell aligned with row height and allow pointer events
+                                height: 48,
+                                minHeight: 48,
+                                width: 120,
+                                pointerEvents: 'auto',
+                                pr: 0
+                            }}>
+                              {/* View Details removed per UI parity request */}
+                              <Tooltip title="Edit">
+                                <IconButton size="small" onClick={() => { setEditingSupplier(item); setSupplierDialog(true); }} disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}>
+                                  <EditIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Delete">
+                                <IconButton size="small" onClick={() => { setSelectedSupplier(item); setDeleteDialog(true); }} disabled={!user || user.role !== 'admin'}>
+                                  <DeleteIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </Box>
+                </TableContainer>
+              </Paper>
+
+              <Menu
+                anchorEl={columnsMenuAnchor}
+                open={columnsMenuOpen}
+                onClose={closeColumnsMenu}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                PaperProps={{ sx: { minWidth: 130, maxWidth: 320, p: 0.2, fontFamily: 'inherit', fontSize: '14px', '&, & *': { fontFamily: 'inherit', fontSize: '14px' } } }}
+                MenuListProps={{ sx: { width: 'auto', pr: 0, pl: .2, fontSize: '14px', '&, & *': { fontFamily: 'inherit', fontSize: '14px' }, '& .MuiListItem-root': { py: 0 }, '& .MuiFormControlLabel-label': { fontSize: '14px', fontFamily: 'inherit' } } }}
+              >
+                <Box sx={{ p: .75, pt: 0 }}>
+                  <RadioGroup
+                    value={Object.values(visibleColumns).every(Boolean) ? 'all' : 'custom'}
+                    onChange={(e) => {/* no-op for now */}}
+                    sx={{ display: 'flex', flexDirection: 'column', gap: 0, alignItems: 'flex-start', pl: .25 }}
+                  >
+                    <FormControlLabel value="default" control={<Radio size="small" />} label="Default" onClick={() => { setDefaultColumns(); closeColumnsMenu(); }} sx={{ width: '100%', mb: 0, '& .MuiFormControlLabel-label': { fontSize: '14px', fontFamily: 'inherit', ml: 0 } }} />
+                    <FormControlLabel value="all" control={<Radio size="small" />} label="All" onClick={() => { setAllColumns(true); closeColumnsMenu(); }} sx={{ width: '100%', mb: 0, '& .MuiFormControlLabel-label': { fontSize: '14px', fontFamily: 'inherit', ml: 0 } }} />
+                    <FormControlLabel value="custom" control={<Radio size="small" />} label="Customize" sx={{ width: '100%', mb: 0, '& .MuiFormControlLabel-label': { fontSize: '14px', fontFamily: 'inherit', ml: 0 } }} />
+                  </RadioGroup>
+                </Box>
+                <Divider />
+                <Box sx={{ maxHeight: 320, overflow: 'auto', '&::-webkit-scrollbar': { width: 1, height: 1 }, '&::-webkit-scrollbar-track': { background: 'transparent' }, '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.18)', borderRadius: 999, minHeight: 12 }, '&::-webkit-scrollbar-corner': { background: 'transparent' }, scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,0,0,0.18) transparent' }}>
+                  <List dense sx={{ py: 0, '&::-webkit-scrollbar': { width: .1, height: .1 }, '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.22)', borderRadius: 999, minHeight: 16 }, '&::-webkit-scrollbar-track': { background: 'transparent' }, scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,0,0,0.22) transparent' }}>
+                    {columnOrder.map((colKey) => (
+                      <ListItem
+                        key={colKey}
+                        draggable
+                        onDragStart={(e) => onDragStart(e, colKey)}
+                        onDragOver={(e) => onDragOver(e, colKey)}
+                        onDrop={onDrop}
+                        onDragEnd={onDragEndNative}
+                        sx={{ display: 'flex', alignItems: 'center', cursor: 'default', gap: 0, px: .75, py: 0 }}
+                      >
+                        <Box sx={{ color: 'action.disabled', cursor: 'grab', display: 'flex', alignItems: 'center', mr: 0, transform: 'translateY(1px)' }}>
+                          <DragIndicatorIcon fontSize="small" sx={{ opacity: 0.9 }} />
+                        </Box>
+                        <Checkbox checked={!!visibleColumns[colKey]} onChange={() => toggleColumn(colKey)} size="medium" disableRipple sx={{ ml: 0, mr: 0, transform: 'scale(0.98)', '& .MuiSvgIcon-root': { fontSize: 20 }, '&.Mui-focusVisible, &:focus-visible': { boxShadow: 'none', outline: 'none' } }} inputProps={{ 'aria-label': `${colKey.replace(/_/g, ' ')} visible` }} />
+                        <Typography sx={{ flex: 1, ml: 0, textTransform: 'none', fontWeight: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'inherit', fontSize: '14px' }}>{colKey.replace(/_/g, ' ')}</Typography>
+                      </ListItem>
+                    ))}
+                  </List>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1 }}>
+                  <Button size="small" onClick={resetColumnOrderToDefault}>Reset</Button>
+                  <Button size="small" onClick={closeColumnsMenu}>Done</Button>
+                </Box>
+              </Menu>
+            </Box>
+          </Card>
+        )}
+
+        {/* Supplier product tabs area */}
+        {activeTab >= 2 && activeSupplierTabIndex !== null && supplierTabs[activeSupplierTabIndex] && (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>{supplierTabs[activeSupplierTabIndex].name} — Products</Typography>
+              <TableContainer component={Paper}>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Product</TableCell>
+                      <TableCell>SKU</TableCell>
+                      <TableCell align="right">Cost</TableCell>
+                      <TableCell align="right">Selling Price</TableCell>
+                      <TableCell>Status</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {(supplierProducts[supplierTabs[activeSupplierTabIndex].id] || []).map((product: any) => (
+                      <TableRow key={product.id}>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight="bold">{product.name}</Typography>
+                          {product.brand && <Typography variant="caption" color="text.secondary">{product.brand}</Typography>}
+                        </TableCell>
+                        <TableCell>{product.sku}</TableCell>
+                        <TableCell align="right">{formatCurrency(product.cost_price)}</TableCell>
+                        <TableCell align="right">{formatCurrency(product.selling_price)}</TableCell>
+                        <TableCell>
+                          <Chip label={product.is_active ? 'Active' : 'Inactive'} color={product.is_active ? 'success' : 'default'} size="small" />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 1 && analytics && (
+          <Grid container spacing={3}>
+            {/* Summary Cards */}
+            <Grid item xs={12} md={3}>
+              <Card>
+                <CardContent sx={{ textAlign: 'center' }}>
+                  <Typography variant="h4" color="primary">
+                    {analytics.summary.total_orders || 0}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Total Orders
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <Card>
+                <CardContent sx={{ textAlign: 'center' }}>
+                  <Typography variant="h4" color="success.main">
+                    {formatCurrency(analytics.summary.total_spent || 0)}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Total Spent
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <Card>
+                <CardContent sx={{ textAlign: 'center' }}>
+                  <Typography variant="h4" color="info.main">
+                    {formatCurrency(analytics.summary.average_order || 0)}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Average Order
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <Card>
+                <CardContent sx={{ textAlign: 'center' }}>
+                  <Typography variant="h4" color="warning.main">
+                    {analytics.summary.active_suppliers || 0}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Active Suppliers
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Monthly Trend Chart */}
+            <Grid item xs={12} md={8}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Monthly Spending Trend
+                  </Typography>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={analytics.monthlyTrend}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis />
+                      <ChartTooltip formatter={(value) => formatCurrency(Number(value))} />
+                      <Line type="monotone" dataKey="total_spent" stroke="#8884d8" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Top Suppliers */}
+            <Grid item xs={12} md={4}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Top Suppliers by Spending
+                  </Typography>
+                  <TableContainer>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Supplier</TableCell>
+                          <TableCell align="right">Spent</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {analytics.topSuppliers.slice(0, 10).map((supplier, index) => (
+                          <TableRow key={index}>
+                            <TableCell>
+                              <Typography variant="body2" fontWeight="bold">
+                                {supplier.name}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {supplier.city}, {supplier.state}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="right">{formatCurrency(supplier.total_spent)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Performance Metrics */}
+            <Grid item xs={12}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Supplier Performance
+                  </Typography>
+                  <TableContainer>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Supplier</TableCell>
+                          <TableCell align="right">Orders</TableCell>
+                          <TableCell align="right">Avg Delivery (days)</TableCell>
+                          <TableCell align="right">Completion Rate</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {analytics.performance.map((supplier, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{supplier.name}</TableCell>
+                            <TableCell align="right">{supplier.total_orders}</TableCell>
+                            <TableCell align="right">
+                              {supplier.avg_delivery_days ? Number(supplier.avg_delivery_days).toFixed(1) : 'N/A'}
+                            </TableCell>
+                            <TableCell align="right">
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                                <Box sx={{ mr: 1 }}>{Number(supplier.completion_rate).toFixed(1)}%</Box>
+                                <Chip
+                                  size="small"
+                                  color={Number(supplier.completion_rate) >= 90 ? 'success' : 
+                                         Number(supplier.completion_rate) >= 75 ? 'warning' : 'error'}
+                                  label={Number(supplier.completion_rate) >= 90 ? 'Excellent' : 
+                                         Number(supplier.completion_rate) >= 75 ? 'Good' : 'Poor'}
+                                />
+                              </Box>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        )}
+
+        {/* Add/Edit Supplier Dialog */}
+        <Dialog open={supplierDialog} onClose={() => setSupplierDialog(false)} maxWidth="md" fullWidth>
+          <DialogTitle>
+            {editingSupplier?.id ? 'Edit Supplier' : 'Add New Supplier'}
+          </DialogTitle>
+          <DialogContent>
+            <Box sx={{ pt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Company Name *"
+                    value={editingSupplier?.name || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Contact Person"
+                    value={editingSupplier?.contact_person || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, contact_person: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Email"
+                    type="email"
+                    value={editingSupplier?.email || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, email: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Phone"
+                    value={editingSupplier?.phone || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, phone: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Address"
+                    value={editingSupplier?.address || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, address: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="City"
+                    value={editingSupplier?.city || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, city: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="State"
+                    value={editingSupplier?.state || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, state: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="Zip Code"
+                    value={editingSupplier?.zip_code || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, zip_code: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Country"
+                    value={editingSupplier?.country || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, country: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Tax ID"
+                    value={editingSupplier?.tax_id || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, tax_id: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Website"
+                    value={editingSupplier?.website || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, website: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Payment Terms"
+                    value={editingSupplier?.payment_terms || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, payment_terms: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Credit Limit"
+                    type="number"
+                    value={editingSupplier?.credit_limit || 0}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, credit_limit: Number(e.target.value) }))}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Notes"
+                    multiline
+                    rows={3}
+                    value={editingSupplier?.notes || ''}
+                    onChange={(e) => setEditingSupplier(prev => ({ ...prev, notes: e.target.value }))}
+                  />
+                </Grid>
+              </Grid>
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setSupplierDialog(false)}>Cancel</Button>
+            <Button 
+              onClick={handleSaveSupplier}
+              variant="contained"
+              disabled={loading || !editingSupplier?.name?.trim()}
+            >
+              {editingSupplier?.id ? 'Update' : 'Create'} Supplier
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Supplier Detail Dialog */}
+        <Dialog open={detailDialog} onClose={() => setDetailDialog(false)} maxWidth="lg" fullWidth>
+          <DialogTitle>
+            Supplier Details - {selectedSupplier?.name}
+          </DialogTitle>
+          <DialogContent>
+            {selectedSupplier && (
+              <Box>
+                <Grid container spacing={2} sx={{ mb: 3 }}>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle2">Contact Information</Typography>
+                    <Box sx={{ mt: 1 }}>
+                      <Typography><ContactIcon sx={{ mr: 1, fontSize: 16 }} />{selectedSupplier.contact_person || 'N/A'}</Typography>
+                      <Typography><EmailIcon sx={{ mr: 1, fontSize: 16 }} />{selectedSupplier.email || 'N/A'}</Typography>
+                      <Typography><PhoneIcon sx={{ mr: 1, fontSize: 16 }} />{selectedSupplier.phone || 'N/A'}</Typography>
+                      {selectedSupplier.website && (
+                        <Typography><WebsiteIcon sx={{ mr: 1, fontSize: 16 }} />{selectedSupplier.website}</Typography>
+                      )}
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle2">Business Metrics</Typography>
+                    <Box sx={{ mt: 1 }}>
+                      <Typography>Total Orders: {selectedSupplier.total_orders}</Typography>
+                      <Typography>Total Spent: {formatCurrency(selectedSupplier.total_purchased || 0)}</Typography>
+                      <Typography>Products: {selectedSupplier.product_count}</Typography>
+                      <Typography>Last Order: {selectedSupplier.last_order_date ? formatDate(selectedSupplier.last_order_date) : 'Never'}</Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+
+                {isSupplierDetail(selectedSupplier) && Array.isArray(selectedSupplier.recentOrders) && selectedSupplier.recentOrders.length > 0 && (
+                  <Box sx={{ mb: 3 }}>
+                    <Typography variant="h6" gutterBottom>Recent Purchase Orders</Typography>
+                    <TableContainer component={Paper}>
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Order #</TableCell>
+                            <TableCell>Date</TableCell>
+                            <TableCell>Status</TableCell>
+                            <TableCell align="right">Amount</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {selectedSupplier.recentOrders.map((order: { id: number; order_number: string; order_date: string; status: string; total_amount: number }) => (
+                            <TableRow key={order.id}>
+                              <TableCell>{order.order_number}</TableCell>
+                              <TableCell>{formatDate(order.order_date)}</TableCell>
+                              <TableCell>
+                                <Chip 
+                                  label={order.status} 
+                                  size="small"
+                                  color={order.status === 'completed' ? 'success' : 
+                                         order.status === 'pending' ? 'warning' : 'default'}
+                                />
+                              </TableCell>
+                              <TableCell align="right">{formatCurrency(order.total_amount)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Box>
+                )}
+
+                {isSupplierDetail(selectedSupplier) && Array.isArray(selectedSupplier.products) && selectedSupplier.products.length > 0 && (
+                  <Box>
+                    <Typography variant="h6" gutterBottom>Products from This Supplier</Typography>
+                    <TableContainer component={Paper}>
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Product</TableCell>
+                            <TableCell>SKU</TableCell>
+                            <TableCell align="right">Cost</TableCell>
+                            <TableCell align="right">Selling Price</TableCell>
+                            <TableCell>Status</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {selectedSupplier.products.slice(0, 20).map((product: { id: number; name: string; sku: string; brand?: string; selling_price: number; cost_price: number; is_active: boolean }) => (
+                            <TableRow key={product.id}>
+                              <TableCell>
+                                <Typography variant="body2" fontWeight="bold">
+                                  {product.name}
+                                </Typography>
+                                {product.brand && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    {product.brand}
+                                  </Typography>
+                                )}
+                              </TableCell>
+                              <TableCell>{product.sku}</TableCell>
+                              <TableCell align="right">{formatCurrency(product.cost_price)}</TableCell>
+                              <TableCell align="right">{formatCurrency(product.selling_price)}</TableCell>
+                              <TableCell>
+                                <Chip 
+                                  label={product.is_active ? 'Active' : 'Inactive'}
+                                  color={product.is_active ? 'success' : 'default'}
+                                  size="small"
+                                />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                    {selectedSupplier.products.length > 20 && (
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                        Showing first 20 products. Total: {selectedSupplier.product_count}
+                      </Typography>
+                    )}
+                  </Box>
+                )}
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDetailDialog(false)}>Close</Button>
+            <Button 
+              variant="contained"
+              startIcon={<EditIcon />}
+              onClick={() => {
+                setEditingSupplier(selectedSupplier);
+                setDetailDialog(false);
+                setSupplierDialog(true);
+              }}
+              disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+            >
+              Edit Supplier
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={deleteDialog} onClose={() => setDeleteDialog(false)}>
+          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogContent>
+            <Typography>
+              Are you sure you want to delete supplier "{selectedSupplier?.name}"?
+              This action cannot be undone.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDeleteDialog(false)}>Cancel</Button>
+            <Button 
+              onClick={handleDeleteSupplier}
+              color="error"
+              variant="contained"
+              disabled={loading}
+            >
+              Delete
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Snackbar for notifications */}
+        <Snackbar
+          open={snackbar.open}
+          autoHideDuration={6000}
+          onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
+        >
+          <Alert 
+            onClose={() => setSnackbar(prev => ({ ...prev, open: false }))} 
+            severity={snackbar.severity}
+          >
+            {snackbar.message}
+          </Alert>
+        </Snackbar>
+      </Box>
+    </LocalizationProvider>
+  );
+};
+
+export default Suppliers;

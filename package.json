@@ -1,0 +1,38 @@
+{
+  "name": "hardware-pos-system",
+  "version": "1.0.0",
+  "description": "Comprehensive web-based Point of Sale system for hardware stores",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "npm run build:backend && npm run build:frontend",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "start": "cd backend && npm start",
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "test": "cd backend && npm test && cd ../frontend && npm test"
+  },
+  "keywords": [
+    "pos",
+    "point-of-sale",
+    "hardware-store",
+    "inventory",
+    "barcode",
+    "offline-support",
+    "real-time"
+  ],
+  "author": "Hardware Store POS Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.12.2",
+    "bcrypt": "^6.0.0"
+  }
+}
