@@ -525,8 +525,11 @@ const POS: React.FC = () => {
                       </TableHead>
                       <TableBody>
                         {groupedResults.map((group, groupIndex) => {
-                          const selectedVariant = selectedVariants[groupIndex] || null;
+                          // For products without variants, use baseProduct; otherwise use selected variant or null
                           const hasVariants = group.variants.length > 1;
+                          const selectedVariant = hasVariants 
+                            ? (selectedVariants[groupIndex] || null)
+                            : group.baseProduct;
                           
                           const handleVariantSelect = (variant: any) => {
                             setSelectedVariants(prev => ({
@@ -636,7 +639,7 @@ const POS: React.FC = () => {
                               <TableCell align="center">
                                 <Chip 
                                   size="small" 
-                                  label={`${selectedVariant?.current_stock ?? '-'}`}
+                                  label={selectedVariant ? `${selectedVariant.current_stock || 0}` : '-'}
                                   color={
                                     !selectedVariant ? "default" :
                                     selectedVariant.current_stock > 10 ? "success" : 
