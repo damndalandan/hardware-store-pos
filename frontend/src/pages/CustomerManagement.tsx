@@ -46,6 +46,7 @@ interface Customer {
   current_balance?: number;
   credit_limit?: number;
   is_active?: boolean;
+  transaction_count?: number;
 }
 
 // AR Transaction Interface
@@ -56,6 +57,11 @@ interface ARTransaction {
   balance_after: number;
   transaction_date: string;
   notes?: string;
+  customer_name?: string;
+  phone?: string;
+  sale_number?: string;
+  sale_id?: number;
+  processed_by_name?: string;
 }
 
 // Purchase History Interface
@@ -84,12 +90,19 @@ const CustomerManagement: React.FC = () => {
   const [customerHistoryDialogOpen, setCustomerHistoryDialogOpen] = useState(false);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [arTransactionsDialogOpen, setArTransactionsDialogOpen] = useState(false);
+  const [partialPaymentDialogOpen, setPartialPaymentDialogOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Partial<Customer> | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [selectedTransaction, setSelectedTransaction] = useState<ARTransaction | null>(null);
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
   const [arTransactions, setArTransactions] = useState<ARTransaction[]>([]);
 
   const [paymentForm, setPaymentForm] = useState({
+    amount: '',
+    notes: ''
+  });
+
+  const [partialPaymentForm, setPartialPaymentForm] = useState({
     amount: '',
     notes: ''
   });
@@ -170,49 +183,61 @@ const CustomerManagement: React.FC = () => {
 
   // View A/R Transactions for customer
   const handleViewArTransactions = async (customer: Customer) => {
-    if (!customer.customer_code) {
-      showNotification('This customer does not have an A/R account', 'warning');
-      return;
-    }
     setSelectedCustomer(customer);
     setArTransactionsDialogOpen(true);
     try {
-      // Find the customer_accounts ID from customer_code
-      const arResponse = await axios.get('/api/customer-accounts', {
-        params: { search: customer.customer_code },
+      const response = await axios.get(`/api/customers/${customer.id}/ar-transactions`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      if (arResponse.data.customers && arResponse.data.customers.length > 0) {
-        const arCustomer = arResponse.data.customers[0];
-        const response = await axios.get(`/api/customer-accounts/${arCustomer.id}`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      
+      // Update selected customer with latest balance from response
+      if (response.data.current_balance !== undefined) {
+        setSelectedCustomer({
+          ...customer,
+          current_balance: response.data.current_balance,
+          credit_limit: response.data.credit_limit || customer.credit_limit
         });
-        setArTransactions(response.data.transactions || []);
       }
+      
+      setArTransactions(response.data.transactions || []);
     } catch (error: any) {
       showNotification('Failed to load A/R transactions', 'error');
     }
   };
 
-  const handleRecordPayment = async () => {
-    if (!selectedCustomer || !selectedCustomer.customer_code) return;
-
+  // Refresh customer data after payment
+  const refreshCustomerData = async (customerId: number) => {
     try {
-      // Find the customer_accounts ID
-      const arResponse = await axios.get('/api/customer-accounts', {
-        params: { search: selectedCustomer.customer_code },
+      const response = await axios.get(`/api/customers/${customerId}/ar-transactions`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
       
-      if (!arResponse.data.customers || arResponse.data.customers.length === 0) {
-        showNotification('A/R account not found', 'error');
-        return;
+      if (response.data) {
+        const updatedCustomer: Customer = {
+          id: customerId,
+          customer_name: response.data.customer_name || selectedCustomer?.customer_name || '',
+          current_balance: response.data.current_balance || 0,
+          credit_limit: response.data.credit_limit || selectedCustomer?.credit_limit || 0,
+          phone: response.data.phone || selectedCustomer?.phone,
+          email: response.data.email || selectedCustomer?.email,
+          total_purchases: response.data.total_purchases || selectedCustomer?.total_purchases || 0,
+          created_at: response.data.created_at || selectedCustomer?.created_at || '',
+          transaction_count: response.data.transaction_count || selectedCustomer?.transaction_count
+        };
+        
+        setSelectedCustomer(updatedCustomer);
+        setArTransactions(response.data.transactions || []);
       }
+    } catch (error: any) {
+      console.error('Failed to refresh customer data:', error);
+    }
+  };
 
-      const arCustomer = arResponse.data.customers[0];
+  const handleRecordPayment = async () => {
+    if (!selectedCustomer) return;
 
-      await axios.post('/api/customer-accounts/transactions', {
-        customerAccountId: arCustomer.id,
+    try {
+      const response = await axios.post(`/api/customers/${selectedCustomer.id}/ar-transactions`, {
         transactionType: 'payment',
         amount: parseFloat(paymentForm.amount),
         paymentMethod: 'CASH',
@@ -221,13 +246,46 @@ const CustomerManagement: React.FC = () => {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
 
-      showNotification('Payment recorded successfully', 'success');
+      showNotification(`Payment of ₱${paymentForm.amount} recorded successfully`, 'success');
       setPaymentDialogOpen(false);
       setPaymentForm({ amount: '', notes: '' });
-      fetchCustomers();
-      if (selectedCustomer) {
-        handleViewArTransactions(selectedCustomer);
-      }
+      
+      // Refresh customer data and transactions
+      await fetchCustomers();
+      await refreshCustomerData(selectedCustomer.id);
+    } catch (error: any) {
+      showNotification(error.response?.data?.message || 'Failed to record payment', 'error');
+    }
+  };
+
+  const handlePartialPayment = async () => {
+    if (!selectedCustomer || !selectedTransaction) return;
+
+    const paymentAmount = parseFloat(partialPaymentForm.amount);
+    if (paymentAmount <= 0) {
+      showNotification('Payment amount must be greater than 0', 'error');
+      return;
+    }
+
+    try {
+      const response = await axios.post(`/api/customers/${selectedCustomer.id}/ar-transactions`, {
+        transactionType: 'payment',
+        amount: paymentAmount,
+        paymentMethod: 'CASH',
+        notes: partialPaymentForm.notes || `Payment for ${selectedTransaction.sale_number || 'transaction'}`,
+        saleId: selectedTransaction.sale_id || null
+      }, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+
+      showNotification(`Payment of ₱${paymentAmount.toFixed(2)} recorded successfully`, 'success');
+      setPartialPaymentDialogOpen(false);
+      setPartialPaymentForm({ amount: '', notes: '' });
+      setSelectedTransaction(null);
+      
+      // Refresh customer data and transactions
+      await fetchCustomers();
+      await refreshCustomerData(selectedCustomer.id);
     } catch (error: any) {
       showNotification(error.response?.data?.message || 'Failed to record payment', 'error');
     }
@@ -292,8 +350,25 @@ const CustomerManagement: React.FC = () => {
 
   // A/R Customers Columns (Tab 2: Only customers with A/R accounts)
   const arCustomersColumns: GridColDef[] = [
-    { field: 'customer_code', headerName: 'A/R Code', width: 120 },
-    { field: 'customer_name', headerName: 'Customer Name', width: 250, flex: 1 },
+    { 
+      field: 'customer_name', 
+      headerName: 'Customer Name', 
+      width: 250, 
+      flex: 1,
+      renderCell: (params: GridRenderCellParams) => (
+        <Box
+          sx={{ 
+            cursor: 'pointer', 
+            color: 'primary.main',
+            fontWeight: 'medium',
+            '&:hover': { textDecoration: 'underline' }
+          }}
+          onClick={() => handleViewArTransactions(params.row)}
+        >
+          {params.value}
+        </Box>
+      )
+    },
     { field: 'phone', headerName: 'Phone', width: 130 },
     {
       field: 'current_balance',
@@ -318,6 +393,20 @@ const CustomerManagement: React.FC = () => {
       valueFormatter: (params) => `₱${Number(params.value || 0).toFixed(2)}`
     },
     {
+      field: 'transaction_count',
+      headerName: 'Transactions',
+      width: 120,
+      type: 'number',
+      renderCell: (params: GridRenderCellParams) => (
+        <Chip 
+          label={`${params.value || 0} txns`} 
+          size="small" 
+          color="info"
+          variant="outlined"
+        />
+      )
+    },
+    {
       field: 'total_purchases',
       headerName: 'Total Purchases',
       width: 150,
@@ -327,7 +416,7 @@ const CustomerManagement: React.FC = () => {
     {
       field: 'actions',
       headerName: 'Actions',
-      width: 180,
+      width: 150,
       sortable: false,
       renderCell: (params: GridRenderCellParams) => (
         <Box>
@@ -367,7 +456,7 @@ const CustomerManagement: React.FC = () => {
       <Box sx={{ mb: 3 }}>
         <Tabs value={tabValue} onChange={(_, newValue) => setTabValue(newValue)}>
           <Tab label="All Customers" icon={<AllCustomersIcon />} />
-          <Tab label="Accounts Receivable (A/R)" icon={<ARIcon />} />
+          <Tab label="A/R Customers" icon={<ARIcon />} />
         </Tabs>
       </Box>
 
@@ -533,50 +622,148 @@ const CustomerManagement: React.FC = () => {
       </Dialog>
 
       {/* A/R Transactions Dialog */}
-      <Dialog open={arTransactionsDialogOpen} onClose={() => setArTransactionsDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog open={arTransactionsDialogOpen} onClose={() => setArTransactionsDialogOpen(false)} maxWidth="lg" fullWidth>
         <DialogTitle>
-          {selectedCustomer && `A/R Transactions - ${selectedCustomer.customer_name}`}
+          A/R Transaction History - {selectedCustomer?.customer_name}
         </DialogTitle>
         <DialogContent>
           {selectedCustomer && (
-            <Box sx={{ mb: 2 }}>
+            <Box sx={{ mb: 3, mt: 1 }}>
               <Grid container spacing={2}>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">Customer Code</Typography>
-                  <Typography variant="body1">{selectedCustomer.customer_code}</Typography>
+                <Grid item xs={12} sm={4}>
+                  <Paper elevation={0} sx={{ p: 2, bgcolor: 'grey.50' }}>
+                    <Typography variant="body2" color="text.secondary">Customer Name</Typography>
+                    <Typography variant="h6" fontWeight="medium">
+                      {selectedCustomer.customer_name}
+                    </Typography>
+                  </Paper>
                 </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">Current Balance</Typography>
-                  <Typography variant="h6" color={selectedCustomer.current_balance && selectedCustomer.current_balance > 0 ? 'warning.main' : 'success.main'}>
-                    ₱{Number(selectedCustomer.current_balance || 0).toFixed(2)}
-                  </Typography>
+                <Grid item xs={12} sm={4}>
+                  <Paper elevation={0} sx={{ p: 2, bgcolor: selectedCustomer.current_balance && selectedCustomer.current_balance > 0 ? 'warning.50' : 'success.50' }}>
+                    <Typography variant="body2" color="text.secondary">Current Balance (Debt Owed)</Typography>
+                    <Typography variant="h5" color={selectedCustomer.current_balance && selectedCustomer.current_balance > 0 ? 'warning.main' : 'success.main'} fontWeight="bold">
+                      ₱{Number(selectedCustomer.current_balance || 0).toFixed(2)}
+                    </Typography>
+                  </Paper>
                 </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">Credit Limit</Typography>
-                  <Typography variant="body1">₱{Number(selectedCustomer.credit_limit || 0).toFixed(2)}</Typography>
-                </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">Available Credit</Typography>
-                  <Typography variant="body1">
-                    ₱{(Number(selectedCustomer.credit_limit || 0) - Number(selectedCustomer.current_balance || 0)).toFixed(2)}
-                  </Typography>
+                <Grid item xs={12} sm={4}>
+                  <Paper elevation={0} sx={{ p: 2, bgcolor: 'grey.50' }}>
+                    <Typography variant="body2" color="text.secondary">Credit Limit</Typography>
+                    <Typography variant="h6" fontWeight="medium">
+                      ₱{Number(selectedCustomer.credit_limit || 0).toFixed(2)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Available: ₱{(Number(selectedCustomer.credit_limit || 0) - Number(selectedCustomer.current_balance || 0)).toFixed(2)}
+                    </Typography>
+                  </Paper>
                 </Grid>
               </Grid>
             </Box>
           )}
-          <Divider sx={{ my: 2 }} />
+          <Divider sx={{ mb: 2 }} />
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+            <Typography variant="subtitle2">Transaction History</Typography>
+            {selectedCustomer && selectedCustomer.current_balance && selectedCustomer.current_balance > 0 && (
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                startIcon={<PaymentIcon />}
+                onClick={() => {
+                  setPaymentDialogOpen(true);
+                }}
+              >
+                Pay Full Balance (₱{Number(selectedCustomer.current_balance).toFixed(2)})
+              </Button>
+            )}
+          </Box>
           <DataGrid
             rows={arTransactions}
             columns={[
-              { field: 'transaction_date', headerName: 'Date', width: 150, valueFormatter: (params) => new Date(params.value).toLocaleDateString() },
-              { field: 'transaction_type', headerName: 'Type', width: 120 },
-              { field: 'amount', headerName: 'Amount', width: 130, valueFormatter: (params) => `₱${Number(params.value || 0).toFixed(2)}` },
-              { field: 'payment_method', headerName: 'Method', width: 120 },
-              { field: 'notes', headerName: 'Notes', flex: 1 }
+              { 
+                field: 'transaction_date', 
+                headerName: 'Date & Time', 
+                width: 160,
+                valueFormatter: (params) => new Date(params.value).toLocaleString('en-US', {
+                  month: '2-digit',
+                  day: '2-digit',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })
+              },
+              { 
+                field: 'transaction_type', 
+                headerName: 'Type', 
+                width: 100,
+                renderCell: (params: GridRenderCellParams) => (
+                  <Chip
+                    label={params.value?.toUpperCase()}
+                    size="small"
+                    color={params.value === 'payment' ? 'success' : params.value === 'charge' ? 'warning' : 'default'}
+                  />
+                )
+              },
+              { 
+                field: 'amount', 
+                headerName: 'Amount', 
+                width: 120,
+                type: 'number',
+                valueFormatter: (params) => `₱${Number(params.value || 0).toFixed(2)}`,
+                cellClassName: (params) => 
+                  params.row.transaction_type === 'payment' ? 'text-success' : 'text-warning'
+              },
+              { 
+                field: 'balance_after', 
+                headerName: 'Balance After', 
+                width: 130,
+                type: 'number',
+                valueFormatter: (params) => `₱${Number(params.value || 0).toFixed(2)}`
+              },
+              { 
+                field: 'sale_number', 
+                headerName: 'Sale #', 
+                width: 120
+              },
+              { 
+                field: 'notes', 
+                headerName: 'Notes', 
+                flex: 1,
+                minWidth: 150
+              },
+              {
+                field: 'actions',
+                headerName: 'Action',
+                width: 100,
+                sortable: false,
+                renderCell: (params: GridRenderCellParams) => (
+                  params.row.transaction_type === 'charge' ? (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="primary"
+                      startIcon={<PaymentIcon />}
+                      onClick={() => {
+                        setSelectedTransaction(params.row);
+                        setPartialPaymentForm({
+                          amount: params.row.amount.toString(),
+                          notes: `Payment for ${params.row.sale_number || 'transaction'}`
+                        });
+                        setPartialPaymentDialogOpen(true);
+                      }}
+                    >
+                      Pay
+                    </Button>
+                  ) : null
+                )
+              }
             ]}
             autoHeight
             disableRowSelectionOnClick
-            hideFooter
+            pageSizeOptions={[10, 25, 50]}
+            initialState={{
+              pagination: { paginationModel: { pageSize: 10 } }
+            }}
           />
         </DialogContent>
         <DialogActions>
@@ -584,9 +771,75 @@ const CustomerManagement: React.FC = () => {
         </DialogActions>
       </Dialog>
 
+      {/* Partial Payment Dialog */}
+      <Dialog open={partialPaymentDialogOpen} onClose={() => setPartialPaymentDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Record Payment for Transaction</DialogTitle>
+        <DialogContent>
+          {selectedTransaction && selectedCustomer && (
+            <Box sx={{ mb: 2, mt: 1 }}>
+              <Paper elevation={0} sx={{ p: 2, bgcolor: 'grey.50', mb: 2 }}>
+                <Grid container spacing={2}>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">Customer</Typography>
+                    <Typography variant="body1" fontWeight="medium">{selectedCustomer.customer_name}</Typography>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">Current Balance</Typography>
+                    <Typography variant="body1" fontWeight="medium" color="warning.main">
+                      ₱{Number(selectedCustomer.current_balance || 0).toFixed(2)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">Sale Number</Typography>
+                    <Typography variant="body1">{selectedTransaction.sale_number || 'N/A'}</Typography>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">Transaction Amount</Typography>
+                    <Typography variant="body1">₱{Number(selectedTransaction.amount || 0).toFixed(2)}</Typography>
+                  </Grid>
+                </Grid>
+              </Paper>
+              <TextField
+                fullWidth
+                label="Payment Amount"
+                type="number"
+                value={partialPaymentForm.amount}
+                onChange={(e) => setPartialPaymentForm({ ...partialPaymentForm, amount: e.target.value })}
+                InputProps={{ startAdornment: '₱' }}
+                sx={{ mb: 2 }}
+                helperText="Enter the amount to pay (can be partial or full)"
+                required
+              />
+              <TextField
+                fullWidth
+                label="Notes"
+                value={partialPaymentForm.notes}
+                onChange={(e) => setPartialPaymentForm({ ...partialPaymentForm, notes: e.target.value })}
+                multiline
+                rows={2}
+              />
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setPartialPaymentDialogOpen(false);
+            setSelectedTransaction(null);
+            setPartialPaymentForm({ amount: '', notes: '' });
+          }}>Cancel</Button>
+          <Button
+            onClick={handlePartialPayment}
+            variant="contained"
+            disabled={!partialPaymentForm.amount || parseFloat(partialPaymentForm.amount) <= 0}
+          >
+            Record Payment
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* AR Payment Dialog */}
       <Dialog open={paymentDialogOpen} onClose={() => setPaymentDialogOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Record Payment</DialogTitle>
+        <DialogTitle>Record Full Payment</DialogTitle>
         <DialogContent>
           {selectedCustomer && (
             <Box sx={{ mb: 2 }}>

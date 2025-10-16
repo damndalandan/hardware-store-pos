@@ -227,6 +227,55 @@ async function createTables(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
+  // Customers table (must be created before sales table)
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      customer_code VARCHAR(50) UNIQUE NOT NULL,
+      customer_name VARCHAR(100) NOT NULL,
+      email VARCHAR(100),
+      phone VARCHAR(20),
+      address TEXT,
+      city VARCHAR(50),
+      state VARCHAR(50),
+      zip_code VARCHAR(10),
+      credit_limit DECIMAL(10,2) DEFAULT 0,
+      current_balance DECIMAL(10,2) DEFAULT 0,
+      payment_terms VARCHAR(100),
+      tax_id VARCHAR(50),
+      notes TEXT,
+      is_active TINYINT(1) DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_customer_code (customer_code),
+      INDEX idx_customer_name (customer_name),
+      INDEX idx_phone (phone)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // Shifts table (must be created before sales table)
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS shifts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      cashier_id INT NOT NULL,
+      cashier_name VARCHAR(100) NOT NULL,
+      start_time DATETIME NOT NULL,
+      end_time DATETIME,
+      starting_cash DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+      ending_cash DECIMAL(10,2),
+      total_sales DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+      total_transactions INT NOT NULL DEFAULT 0,
+      total_cash DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+      total_card DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+      total_mobile DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+      total_check DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+      cash_difference DECIMAL(10,2),
+      is_active TINYINT(1) DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (cashier_id) REFERENCES users (id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
   // Sales table
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS sales (
@@ -282,10 +331,11 @@ async function createTables(): Promise<void> {
     CREATE TABLE IF NOT EXISTS inventory_transactions (
       id INT AUTO_INCREMENT PRIMARY KEY,
       product_id INT NOT NULL,
-      transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('sale', 'purchase', 'adjustment', 'return')),
+      transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('sale', 'purchase', 'adjustment', 'return', 'count')),
       quantity_change INT NOT NULL,
       reference_id INT, -- sale_id or purchase_order_id
       reference_type VARCHAR(20), -- 'sale' or 'purchase_order'
+      reference_number VARCHAR(50),
       notes TEXT,
       created_by INT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -294,30 +344,8 @@ async function createTables(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
-  // Shifts table (for cashier shift management)
-  await pool.execute(`
-    CREATE TABLE IF NOT EXISTS shifts (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      cashier_id INT NOT NULL,
-      cashier_name VARCHAR(100) NOT NULL,
-      start_time DATETIME NOT NULL,
-      end_time DATETIME,
-      starting_cash DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-      ending_cash DECIMAL(10,2),
-      total_sales DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-      total_transactions INT NOT NULL DEFAULT 0,
-      total_cash DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-      total_card DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-      total_mobile DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-      total_check DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-      cash_difference DECIMAL(10,2),
-      is_active TINYINT(1) DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (cashier_id) REFERENCES users (id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
-
   // Create indexes for better performance
+  // Single column indexes
   await pool.execute(`
     CREATE INDEX IF NOT EXISTS idx_products_sku ON products (sku)
   `);
@@ -328,8 +356,41 @@ async function createTables(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_products_category ON products (category_id)
   `);
   await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_products_name ON products (name)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_products_brand ON products (brand)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_products_is_active ON products (is_active)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_products_supplier ON products (supplier_id)
+  `);
+  
+  // Composite indexes for common query patterns
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_products_active_category ON products (is_active, category_id)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_products_active_brand ON products (is_active, brand)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_products_active_name ON products (is_active, name)
+  `);
+  
+  // Inventory indexes
+  await pool.execute(`
     CREATE INDEX IF NOT EXISTS idx_inventory_product ON inventory (product_id)
   `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_inventory_location ON inventory (location)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_inventory_stock_level ON inventory (current_stock)
+  `);
+  
+  // Sales indexes
   await pool.execute(`
     CREATE INDEX IF NOT EXISTS idx_sales_date ON sales (sale_date)
   `);
@@ -337,8 +398,32 @@ async function createTables(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_sales_cashier ON sales (cashier_id)
   `);
   await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales (customer_id)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_sales_date_cashier ON sales (sale_date, cashier_id)
+  `);
+  
+  // Sale items indexes
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items (sale_id)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_sale_items_product ON sale_items (product_id)
+  `);
+  
+  // Inventory transactions indexes
+  await pool.execute(`
     CREATE INDEX IF NOT EXISTS idx_inventory_transactions_product ON inventory_transactions (product_id)
   `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_inventory_transactions_type ON inventory_transactions (transaction_type)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_inventory_transactions_date ON inventory_transactions (created_at)
+  `);
+  
+  // Shifts indexes
   await pool.execute(`
     CREATE INDEX IF NOT EXISTS idx_shifts_cashier ON shifts (cashier_id)
   `);
@@ -347,6 +432,25 @@ async function createTables(): Promise<void> {
   `);
   await pool.execute(`
     CREATE INDEX IF NOT EXISTS idx_shifts_date ON shifts (start_time)
+  `);
+  
+  // Customer indexes
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (customer_name)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_customers_code ON customers (customer_code)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone)
+  `);
+  
+  // Supplier indexes
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers (name)
+  `);
+  await pool.execute(`
+    CREATE INDEX IF NOT EXISTS idx_suppliers_active ON suppliers (is_active)
   `);
 
   logger.info('Database tables created successfully');

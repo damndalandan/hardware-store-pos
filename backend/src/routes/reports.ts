@@ -304,7 +304,7 @@ router.get('/inventory', asyncHandler(async (req: AuthenticatedRequest, res: exp
         SUM(si.quantity) as total_sold_30d
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
-      WHERE s.sale_date >= date('now', '-30 days')
+      WHERE s.sale_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
       GROUP BY si.product_id
     ) sales_data ON p.id = sales_data.product_id
     ${whereClause}
@@ -321,7 +321,7 @@ router.get('/inventory', asyncHandler(async (req: AuthenticatedRequest, res: exp
       COUNT(*) as transaction_count,
       SUM(ABS(it.quantity_change)) as total_quantity
     FROM inventory_transactions it
-    WHERE it.created_at >= date('now', '-30 days')
+    WHERE it.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
     GROUP BY DATE(it.created_at), it.transaction_type
     ORDER BY date, it.transaction_type
   `);
@@ -453,7 +453,7 @@ router.get('/suppliers', asyncHandler(async (req: AuthenticatedRequest, res: exp
       COUNT(CASE WHEN po.status = 'cancelled' THEN 1 END) as cancelled_orders,
       AVG(CASE 
         WHEN po.status = 'completed' AND po.received_date IS NOT NULL THEN 
-          julianday(po.received_date) - julianday(po.order_date)
+          DATEDIFF(po.received_date, po.order_date)
       END) as avg_delivery_days,
       ROUND(
         (COUNT(CASE WHEN po.status = 'completed' THEN 1 END) * 100.0 / COUNT(*)), 

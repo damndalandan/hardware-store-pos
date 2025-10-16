@@ -8,10 +8,16 @@ import axios from 'axios';
 
 interface Customer {
   id: number;
-  name: string;
+  customer_name: string;
   email?: string;
   phone?: string;
   address?: string;
+  customer_code?: string;
+  credit_limit?: number;
+  current_balance?: number;
+  is_active?: number;
+  total_purchases?: number;
+  last_purchase_date?: string;
 }
 
 const Customers: React.FC = () => {
@@ -40,7 +46,7 @@ const Customers: React.FC = () => {
   };
 
   const handleSaveCustomer = async () => {
-    if (!editingCustomer?.name?.trim()) {
+    if (!editingCustomer?.customer_name?.trim()) {
       setAlert({ message: 'Customer name is required', severity: 'error' });
       return;
     }
@@ -56,7 +62,7 @@ const Customers: React.FC = () => {
       setDialogOpen(false);
       fetchCustomers();
     } catch (error: any) {
-      setAlert({ message: 'Failed to save customer', severity: 'error' });
+      setAlert({ message: error.response?.data?.message || 'Failed to save customer', severity: 'error' });
     } finally {
       setLoading(false);
     }
@@ -90,18 +96,34 @@ const Customers: React.FC = () => {
               <TableCell sx={{ top: 0, position: 'sticky', backgroundColor: 'background.paper', zIndex: 1200 }}>Name</TableCell>
               <TableCell sx={{ top: 0, position: 'sticky', backgroundColor: 'background.paper', zIndex: 1200 }}>Email</TableCell>
               <TableCell sx={{ top: 0, position: 'sticky', backgroundColor: 'background.paper', zIndex: 1200 }}>Phone</TableCell>
-              <TableCell sx={{ top: 0, position: 'sticky', backgroundColor: 'background.paper', zIndex: 1200 }}>Address</TableCell>
-              <TableCell sx={{ top: 0, position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1250, borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap' }} data-field="actions">Actions</TableCell>
+              <TableCell sx={{ top: 0, position: 'sticky', backgroundColor: 'background.paper', zIndex: 1200 }}>A/R Account</TableCell>
+              <TableCell sx={{ top: 0, position: 'sticky', backgroundColor: 'background.paper', zIndex: 1200 }} align="right">Amount Owed</TableCell>
+              <TableCell sx={{ top: 0, position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1400, WebkitBackgroundClip: 'padding-box', backgroundClip: 'padding-box', boxShadow: '-6px 0 12px rgba(0,0,0,0.04)', borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap' }} data-field="actions">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {customers.map((customer) => (
               <TableRow key={customer.id}>
-                <TableCell>{customer.name}</TableCell>
-                <TableCell>{customer.email}</TableCell>
-                <TableCell>{customer.phone}</TableCell>
-                <TableCell>{customer.address}</TableCell>
-                <TableCell data-field="actions" sx={{ position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1240, borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap', pointerEvents: 'auto' }}>
+                <TableCell>{customer.customer_name}</TableCell>
+                <TableCell>{customer.email || '-'}</TableCell>
+                <TableCell>{customer.phone || '-'}</TableCell>
+                <TableCell>
+                  {customer.customer_code ? (
+                    <Box component="span" sx={{ px: 1, py: 0.5, bgcolor: 'info.light', color: 'info.dark', borderRadius: 1, fontSize: '0.875rem' }}>
+                      {customer.customer_code}
+                    </Box>
+                  ) : (
+                    <Box component="span" sx={{ color: 'text.secondary' }}>-</Box>
+                  )}
+                </TableCell>
+                <TableCell align="right">
+                  {customer.customer_code ? (
+                    <Box component="span" sx={{ color: Number(customer.current_balance || 0) > 0 ? 'error.main' : 'text.primary', fontWeight: Number(customer.current_balance || 0) > 0 ? 'bold' : 'normal' }}>
+                      ₱{Number(customer.current_balance || 0).toFixed(2)}
+                    </Box>
+                  ) : '-'}
+                </TableCell>
+                <TableCell data-field="actions" sx={{ position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1400, WebkitBackgroundClip: 'padding-box', backgroundClip: 'padding-box', boxShadow: '-6px 0 12px rgba(0,0,0,0.04)', borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap', pointerEvents: 'auto' }}>
                   <IconButton onClick={() => { setEditingCustomer(customer); setDialogOpen(true); }}><EditIcon /></IconButton>
                   <IconButton color="error" onClick={() => { setSelectedCustomer(customer); setDeleteDialogOpen(true); }}><DeleteIcon /></IconButton>
                 </TableCell>
@@ -111,35 +133,48 @@ const Customers: React.FC = () => {
         </Table>
       </Paper>
       {/* Add/Edit Dialog */}
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)}>
+      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{editingCustomer?.id ? 'Edit Customer' : 'Add Customer'}</DialogTitle>
         <DialogContent>
           <TextField
             label="Name"
-            value={editingCustomer?.name || ''}
-            onChange={e => setEditingCustomer(prev => ({ ...prev, name: e.target.value }))}
+            value={editingCustomer?.customer_name || ''}
+            onChange={e => setEditingCustomer(prev => ({ ...prev, customer_name: e.target.value }))}
             fullWidth
-            sx={{ mb: 2 }}
+            margin="normal"
           />
           <TextField
             label="Email"
             value={editingCustomer?.email || ''}
             onChange={e => setEditingCustomer(prev => ({ ...prev, email: e.target.value }))}
             fullWidth
-            sx={{ mb: 2 }}
+            margin="normal"
           />
           <TextField
             label="Phone"
             value={editingCustomer?.phone || ''}
             onChange={e => setEditingCustomer(prev => ({ ...prev, phone: e.target.value }))}
             fullWidth
-            sx={{ mb: 2 }}
+            margin="normal"
           />
           <TextField
             label="Address"
             value={editingCustomer?.address || ''}
             onChange={e => setEditingCustomer(prev => ({ ...prev, address: e.target.value }))}
             fullWidth
+            margin="normal"
+            multiline
+            rows={2}
+          />
+          <Typography variant="subtitle2" sx={{ mt: 2, mb: 1, color: 'text.secondary' }}>Accounts Receivable (Optional)</Typography>
+          <TextField
+            label="A/R Account Code"
+            value={editingCustomer?.customer_code || ''}
+            onChange={e => setEditingCustomer(prev => ({ ...prev, customer_code: e.target.value }))}
+            fullWidth
+            margin="normal"
+            placeholder="e.g., AR-001"
+            helperText="Enable A/R tracking for this customer (debt/installment payments)"
           />
         </DialogContent>
         <DialogActions>
@@ -151,7 +186,7 @@ const Customers: React.FC = () => {
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
         <DialogTitle>Confirm Delete</DialogTitle>
         <DialogContent>
-          Are you sure you want to delete customer "{selectedCustomer?.name}"?
+          Are you sure you want to delete customer "{selectedCustomer?.customer_name}"?
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>

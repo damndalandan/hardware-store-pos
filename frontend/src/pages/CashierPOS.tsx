@@ -64,6 +64,7 @@ import { useOffline } from '../contexts/OfflineContext';
 // Import components we'll create
 import EnhancedPaymentDialog from '../components/EnhancedPaymentDialog';
 import ShiftDialog from '../components/ShiftDialog';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const POS: React.FC = () => {
   const theme = useTheme();
@@ -424,7 +425,7 @@ const POS: React.FC = () => {
               <Tooltip title="Active shift - Click to view details">
                 <Chip 
                   icon={<AccessTime />} 
-                  label={`$${Number(currentShift.totalSales).toFixed(2)} • ${currentShift.totalTransactions} sales`}
+                  label={`$${Number(currentShift?.totalSales || 0).toFixed(2)} • ${currentShift?.totalTransactions ?? 0} sales`}
                   color="success"
                   variant="outlined"
                   size="small"
@@ -617,14 +618,6 @@ const POS: React.FC = () => {
                                         </Box>
                                       )}
                                     </Box>
-                                  )}
-                                  
-                                  {/* Selected variant display */}
-                                  {hasVariants && selectedVariant && (
-                                    <Typography variant="caption" color="primary" sx={{ mt: 0.5, display: 'block' }}>
-                                      Selected: {selectedVariant.size && `${selectedVariant.size} `}
-                                      {selectedVariant.color && `${selectedVariant.color}`}
-                                    </Typography>
                                   )}
                                 </Box>
                               </TableCell>
@@ -923,11 +916,13 @@ const POS: React.FC = () => {
 
       {/* Shift Dialog */}
       {showShiftDialog && (
-        <ShiftDialog
-          open={true}
-          onClose={() => setShowShiftDialog(null)}
-          type={showShiftDialog}
-        />
+        <ErrorBoundary>
+          <ShiftDialog
+            open={true}
+            onClose={() => setShowShiftDialog(null)}
+            type={showShiftDialog}
+          />
+        </ErrorBoundary>
       )}
 
       {/* Payment Dialog */}

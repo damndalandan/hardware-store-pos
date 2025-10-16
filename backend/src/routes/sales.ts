@@ -383,7 +383,10 @@ router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: express.Resp
 
   const [rows] = await pool.execute(`
     SELECT 
-      s.*,
+      s.id, s.sale_number, s.sale_date, s.customer_id, s.customer_name, 
+      s.customer_email, s.customer_phone, s.cashier_id, s.subtotal, 
+      s.tax_amount, s.discount_amount, s.total_amount, 
+      s.payment_method, s.payment_status, s.shift_id, s.created_at,
       u.username as cashier_username,
       COUNT(si.id) as item_count,
       GROUP_CONCAT(DISTINCT p.name ORDER BY p.name SEPARATOR ', ') as product_names
@@ -392,7 +395,10 @@ router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: express.Resp
     LEFT JOIN sale_items si ON s.id = si.sale_id
     LEFT JOIN products p ON si.product_id = p.id
     ${whereClause}
-    GROUP BY s.id
+    GROUP BY s.id, s.sale_number, s.sale_date, s.customer_id, s.customer_name, 
+             s.customer_email, s.customer_phone, s.cashier_id, s.subtotal, 
+             s.tax_amount, s.discount_amount, s.total_amount, 
+             s.payment_method, s.payment_status, s.shift_id, s.created_at, u.username
     ORDER BY s.sale_date DESC
     LIMIT ? OFFSET ?
   `, [...params, Number(limit), offset]);

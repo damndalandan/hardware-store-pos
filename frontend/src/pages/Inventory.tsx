@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box, Typography, Button, TextField, Grid, Card, CardContent, Dialog, DialogTitle,
   DialogContent, DialogActions, Select, MenuItem, FormControl, InputLabel, InputAdornment,
   Chip, Alert, Snackbar, Tooltip, IconButton, Tab, Tabs, LinearProgress, Popover,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
   Accordion, AccordionSummary, AccordionDetails, TableSortLabel, Menu, MenuItem as MUIMenuItem, Checkbox,
-  RadioGroup, FormControlLabel, Radio, List, ListItem, Divider
+  RadioGroup, FormControlLabel, Radio, List, ListItem, Divider, TablePagination
 } from '@mui/material';
 import {
   Add as AddIcon, Edit as EditIcon, Search as SearchIcon, Download as DownloadIcon,
@@ -97,6 +97,12 @@ const Inventory: React.FC = () => {
   const [availabilityFilter, setAvailabilityFilter] = useState<'all' | 'available' | 'not_available'>('all');
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
   
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
+  const [lowStockPage, setLowStockPage] = useState(0);
+  const [lowStockRowsPerPage, setLowStockRowsPerPage] = useState(25);
+  
   // Adjustment form
   const [adjustmentForm, setAdjustmentForm] = useState({
     quantityChange: 0,
@@ -119,8 +125,9 @@ const Inventory: React.FC = () => {
   // sorting state
   const [sortBy, setSortBy] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-  // column visibility
-  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
+  // column visibility (persisted in localStorage)
+  const defaultVisibleColumns: Record<string, boolean> = {
+    select: true,
     sku: true,
     name: true,
     brand: true,
@@ -135,6 +142,21 @@ const Inventory: React.FC = () => {
     last_counted_at: true,
     // actions is special: always visible
     actions: true
+  };
+  
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem('inventory_visible_columns');
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, boolean>;
+        // Ensure actions is always visible
+        parsed.actions = true;
+        return parsed;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return defaultVisibleColumns;
   });
   // column menu
   const [colMenuAnchor, setColMenuAnchor] = useState<null | HTMLElement>(null);
@@ -150,7 +172,14 @@ const Inventory: React.FC = () => {
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem('inventory_column_order');
-      if (raw) return JSON.parse(raw) as string[];
+      if (raw) {
+        const saved = JSON.parse(raw) as string[];
+        // Ensure 'select' is in the order if it's not already (for backwards compatibility)
+        if (!saved.includes('select')) {
+          return ['select', ...saved];
+        }
+        return saved;
+      }
     } catch (e) {
       // ignore
     }
@@ -186,6 +215,8 @@ const Inventory: React.FC = () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
+      // Add limit to prevent loading too many products at once
+      params.append('limit', '1000');
       // preserve existing low stock option
       if (showLowStockOnly) params.append('low_stock_only', 'true');
       // apply new filters
@@ -237,6 +268,27 @@ const Inventory: React.FC = () => {
     else if (activeTab === 1) fetchLowStock();
     else if (activeTab === 2) fetchMovements();
   }, [activeTab, fetchInventory, fetchLowStock, fetchMovements]);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setPage(0);
+  }, [searchTerm, categoryFilter, brandFilter, availabilityFilter, showLowStockOnly]);
+
+  useEffect(() => {
+    setLowStockPage(0);
+  }, [categoryFilter, brandFilter]);
+
+  // Client-side filtered inventory for search
+  const filteredInventory = useMemo(() => {
+    if (!searchTerm) return inventory;
+    const search = searchTerm.toLowerCase();
+    return inventory.filter((item) => 
+      item.sku?.toLowerCase().includes(search) ||
+      item.name?.toLowerCase().includes(search) ||
+      item.brand?.toLowerCase().includes(search) ||
+      item.category_name?.toLowerCase().includes(search)
+    );
+  }, [inventory, searchTerm]);
 
   // Utility functions
   const showNotification = (message: string, severity: 'success' | 'error' | 'warning' | 'info' = 'success') => {
@@ -581,37 +633,45 @@ const Inventory: React.FC = () => {
   const openColMenu = (e: React.MouseEvent<HTMLElement>) => setColMenuAnchor(e.currentTarget);
   const closeColMenu = () => setColMenuAnchor(null);
   const toggleColumn = (col: string) => {
-    if (col === 'actions') return; // always visible
-    setVisibleColumns(prev => ({ ...prev, [col]: !prev[col] }));
+    if (col === 'actions') return; // actions always visible
+    setVisibleColumns(prev => {
+      const updated = { ...prev, [col]: !prev[col] };
+      // Persist to localStorage
+      try {
+        localStorage.setItem('inventory_visible_columns', JSON.stringify(updated));
+      } catch (e) {
+        // ignore
+      }
+      return updated;
+    });
     // when user manually toggles a column, switch the menu mode to 'custom'
     setColumnMode('custom');
-  };
-
-  const defaultVisibleColumns: Record<string, boolean> = {
-    sku: true,
-    name: true,
-    brand: true,
-    category_name: true,
-    unit: true,
-    current_stock: true,
-    reserved_stock: true,
-    available_stock: true,
-    min_stock_level: true,
-    inventory_value: true,
-    location: true,
-    last_counted_at: true,
-    actions: true
   };
 
   const setAllColumns = () => {
     setVisibleColumns(prev => {
       const copy = { ...prev };
       Object.keys(copy).forEach(k => { if (k !== 'actions') copy[k] = true; });
+      // Persist to localStorage
+      try {
+        localStorage.setItem('inventory_visible_columns', JSON.stringify(copy));
+      } catch (e) {
+        // ignore
+      }
       return copy;
     });
   };
 
-  const setDefaultColumns = () => setVisibleColumns({ ...defaultVisibleColumns });
+  const setDefaultColumns = () => {
+    const defaults = { ...defaultVisibleColumns };
+    setVisibleColumns(defaults);
+    // Persist to localStorage
+    try {
+      localStorage.setItem('inventory_visible_columns', JSON.stringify(defaults));
+    } catch (e) {
+      // ignore
+    }
+  };
 
   // reset column order to default and persist
   const resetColumnOrderToDefault = () => {
@@ -632,7 +692,22 @@ const Inventory: React.FC = () => {
   // helper to format column keys into Title Case labels (caps first letter, SKU all caps)
   const formatLabel = (key: string) => {
     if (key.toLowerCase() === 'sku') return 'SKU';
+    if (key === 'select') return 'Select';
     return key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+  };
+
+  // Helper to get conditional display and padding style for columns
+  const getColumnStyle = (columnKey: string) => {
+    const isHidden = visibleColumns[columnKey] === false;
+    const isSelectHidden = visibleColumns['select'] === false;
+    // Add left padding to first visible column when select is hidden
+    const isFirstColumn = columnKey === 'sku' || (columnKey === 'name' && visibleColumns['sku'] === false);
+    const needsPadding = isSelectHidden && isFirstColumn && !isHidden;
+    
+    return {
+      display: isHidden ? 'none' : undefined,
+      pl: needsPadding ? 2 : undefined
+    };
   };
 
   // Native drag-and-drop handlers
@@ -818,12 +893,7 @@ const Inventory: React.FC = () => {
 
             {/* Filter chips */}
             <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              <Chip
-                label={`Low Stock Only: ${showLowStockOnly ? 'On' : 'Off'}`}
-                onClick={() => setShowLowStockOnly(!showLowStockOnly)}
-                color={showLowStockOnly ? 'primary' : 'default'}
-                variant={showLowStockOnly ? 'filled' : 'outlined'}
-              />
+              {/* Low Stock Only button removed per request - state remains for API filtering if used elsewhere */}
             </Box>
           </CardContent>
         </Card>
@@ -933,56 +1003,27 @@ const Inventory: React.FC = () => {
                 border: '1px solid',
                 borderColor: 'divider',
                 borderRadius: 2,
-                // ensure children don't overflow the rounded corners
-                overflowClipMargin: 'content-box',
-                // allow TableContainer to clip children to rounded corners
-                overflow: 'hidden',
-                '& .MuiTable-root': { borderRadius: 2 }
-              }}
-            >
-              {/* Inner scrolling area to keep rounded corners on the container */}
-              <Box sx={{
+                // make TableContainer the scrolling ancestor so sticky right works
                 maxHeight: 600,
                 overflow: 'auto',
                 // custom scrollbar styling: ultra-thin and remove native buttons/triangle
-                // width/height set to 2px for webkit browsers
-                '&::-webkit-scrollbar': {
-                  width: 1,
-                  height: 1,
-                },
-                '&::-webkit-scrollbar-button': {
-                  display: 'none',
-                  width: 0,
-                  height: 0,
-                },
-                // remove visible track line
-                '&::-webkit-scrollbar-track': {
-                  background: 'transparent',
-                },
-                // thumb more visible but narrow
-                '&::-webkit-scrollbar-thumb': {
-                  backgroundColor: 'rgba(0,0,0,0.28)',
-                  borderRadius: 999,
-                  minHeight: 20,
-                },
-                // hide scrollbar corner in webkit
-                '&::-webkit-scrollbar-corner': {
-                  background: 'transparent'
-                },
-                // Firefox: best-effort (thin) and transparent track
+                '&::-webkit-scrollbar': { width: 1, height: 1 },
+                '&::-webkit-scrollbar-button': { display: 'none', width: 0, height: 0 },
+                '&::-webkit-scrollbar-track': { background: 'transparent' },
+                '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.28)', borderRadius: 999, minHeight: 20 },
+                '&::-webkit-scrollbar-corner': { background: 'transparent' },
                 scrollbarWidth: 'thin',
                 scrollbarColor: 'rgba(0,0,0,0.28) transparent',
-                // attempt to remove Windows-specific resize triangle by overriding corner/background
-                '&': {
-                  MsOverflowStyle: 'auto'
-                }
-              }}>
-                {/* Make table rows more compact: tighten paddings and set explicit heights */}
-                <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 48 }, '& .MuiTableRow-root': { height: 48 } }}>
+                overflowClipMargin: 'content-box',
+                '& .MuiTable-root': { borderRadius: 2 }
+              }}
+            >
+              {/* Make table rows more compact: tighten paddings and set explicit heights */}
+              <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 40 }, '& .MuiTableRow-root': { height: 40 } }}>
         <TableHead>
-          <TableRow sx={{ height: 48 }}>
+          <TableRow sx={{ height: 40 }}>
                   {/* selection checkbox column */}
-                  <TableCell sx={{ top: 0, position: 'sticky', backgroundColor: '#f7f7f7', zIndex: 1300, width: 48, py: 0.5 }}>
+                  <TableCell sx={{ top: 0, position: 'sticky', backgroundColor: '#f7f7f7', zIndex: 1300, width: 48, py: 0.5, ...getColumnStyle('select') }}>
                     <Checkbox
                       checked={isAllSelected}
                       indeterminate={selectedItems.length > 0 && selectedItems.length < inventory.length}
@@ -999,7 +1040,7 @@ const Inventory: React.FC = () => {
                     const sortable = ['sku', 'name', 'brand', 'category_name', 'current_stock'].includes(col);
                     const displayLabel = label === 'Sku' ? 'SKU' : (label === 'Last Counted' ? 'Last Counted' : (label === 'Inventory Value' ? 'Value' : (label === 'Available Stock' ? 'Available' : label)));
                     return (
-                      <TableCell key={col} sx={{ ...headerCellSx, py: 0.5 }}>
+                      <TableCell key={col} sx={{ ...headerCellSx, py: 0.5, ...getColumnStyle(col) }}>
                         {sortable ? (
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}>
                             <TableSortLabel
@@ -1036,35 +1077,43 @@ const Inventory: React.FC = () => {
                       position: 'sticky',
                       right: 0,
                       backgroundColor: '#f7f7f7',
-                      // keep z-index below MUI modal/popover (1300) so menus/modals appear above
-                      zIndex: 1200,
+                      // Z-index for sticky header Actions: higher than regular header (1200) but lower than modals
+                      zIndex: 1250,
                       borderLeft: '1px solid',
                       borderColor: 'divider',
                       whiteSpace: 'nowrap',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'flex-end',
-                      gap: 1,
                       pr: 0,
-                      // header row height set to 48 to match body rows
-                      height: 48,
-                      minHeight: 48,
                       py: 0.5,
                       // keep the actions vertically centered and make icon buttons compact
                       '& .MuiIconButton-root': { height: 32, width: 32, p: 0 }
                     }}
                   >
-                    <Box sx={{ mr: 1 }}>Actions</Box>
-                    <IconButton size="small" onClick={openColMenu} sx={{ p: 0.5 }} aria-label="Columns">
-                      <MoreVertIcon fontSize="small" />
-                    </IconButton>
+                    <Box sx={{ 
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'flex-end',
+                      gap: 1,
+                      height: 40,
+                      minHeight: 40,
+                      // ensure header width matches sticky action cell in rows
+                      minWidth: 120,
+                      width: 120,
+                      boxSizing: 'border-box'
+                    }}>
+                      <Box sx={{ mr: 1 }}>Actions</Box>
+                      <IconButton size="small" onClick={openColMenu} sx={{ p: 0.5 }} aria-label="Columns">
+                        <MoreVertIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
                   </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {inventory.map((item) => (
-                  <TableRow key={item.id} hover sx={{ height: 48 }}>
-                      <TableCell sx={{ ...cellSx, py: .5 }}>
+                {filteredInventory
+                  .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+                  .map((item) => (
+                  <TableRow key={item.id} hover sx={{ height: 40 }}>
+                      <TableCell sx={{ ...cellSx, py: .5, ...getColumnStyle('select') }}>
                         <Checkbox
                           checked={(selectedItems as number[]).includes(item.id)}
                           onChange={() => toggleRowSelected(item.id)}
@@ -1077,10 +1126,10 @@ const Inventory: React.FC = () => {
                       if (!visibleColumns[col]) return null;
                       switch (col) {
                         case 'sku':
-                          return <TableCell key={col} sx={{ ...cellSx, py: 0.5 }}>{item.sku}</TableCell>;
+                          return <TableCell key={col} sx={{ ...cellSx, py: 0.5, ...getColumnStyle(col) }}>{item.sku}</TableCell>;
                         case 'name':
                           return (
-                            <TableCell key={col} sx={{ ...cellSx, py: 0.5 }}>
+                            <TableCell key={col} sx={{ ...cellSx, py: 0.5, ...getColumnStyle(col) }}>
                               <Typography noWrap>{item.name}</Typography>
                             </TableCell>
                           );
@@ -1116,27 +1165,38 @@ const Inventory: React.FC = () => {
 
                     <TableCell
             sx={{
-              position: 'sticky',
-              right: 0,
-              backgroundColor: 'background.paper',
-              // keep z-index below MUI modal/popover (1300) so menus/modals appear above
-              zIndex: 1200,
+                        position: 'sticky',
+                        right: 0,
+                        backgroundColor: 'background.paper',
+                        // Higher z-index so it stays on top of scrolling content
+                        zIndex: 1400,
+                        // ensure background doesn't show bleed when using rounded containers
+                        WebkitBackgroundClip: 'padding-box',
+                        backgroundClip: 'padding-box',
+                        // subtle separation shadow so the sticky column reads clearly
+                        boxShadow: '-6px 0 12px rgba(0,0,0,0.04)',
                         borderLeft: '1px solid',
                         borderColor: 'divider',
                         whiteSpace: 'nowrap',
                         pointerEvents: 'auto',
-                        // ensure the sticky actions cell matches the row height
-                        height: 48,
-                        minHeight: 48,
+                        pr: 0,
                         py: 0.5,
-                        // ensure buttons stay centered when rows are shorter
-                        display: 'flex',
-                        alignItems: 'center',
                         // tighten icon button sizing so the container height equals the row
                         '& .MuiIconButton-root': { height: 32, width: 32, p: 0 }
                       }}
                     >
-                      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', height: '100%' }}>
+                      <Box sx={{ 
+                        display: 'flex', 
+                        gap: 0.5, 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        height: 40,
+                        minHeight: 40,
+                        // ensure body sticky cell uses same width as header
+                        minWidth: 120,
+                        width: 120,
+                        boxSizing: 'border-box'
+                      }}>
                         <Tooltip title="Adjust Stock">
                           <IconButton
                             size="small"
@@ -1193,8 +1253,32 @@ const Inventory: React.FC = () => {
                 ))}
               </TableBody>
             </Table>
-              </Box>
             </TableContainer>
+            
+            {/* Pagination Controls */}
+            <TablePagination
+              rowsPerPageOptions={[10, 25, 50, 100]}
+              component="div"
+              count={filteredInventory.length}
+              rowsPerPage={rowsPerPage}
+              page={page}
+              onPageChange={(event, newPage) => setPage(newPage)}
+              onRowsPerPageChange={(event) => {
+                setRowsPerPage(parseInt(event.target.value, 10));
+                setPage(0);
+              }}
+              sx={{
+                borderTop: '1px solid',
+                borderColor: 'divider',
+                '& .MuiTablePagination-toolbar': {
+                  minHeight: 48,
+                  px: 2
+                },
+                '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+                  fontSize: '14px'
+                }
+              }}
+            />
           </Paper>
           {/* Column visibility menu */}
           <Menu
@@ -1318,12 +1402,7 @@ const Inventory: React.FC = () => {
                 border: '1px solid',
                 borderColor: 'divider',
                 borderRadius: 2,
-                overflowClipMargin: 'content-box',
-                overflow: 'hidden',
-                '& .MuiTable-root': { borderRadius: 2 }
-              }}
-            >
-              <Box sx={{
+                // make TableContainer the scrolling ancestor so sticky right works
                 maxHeight: 600,
                 overflow: 'auto',
                 '&::-webkit-scrollbar': { width: 1, height: 1 },
@@ -1333,17 +1412,19 @@ const Inventory: React.FC = () => {
                 '&::-webkit-scrollbar-corner': { background: 'transparent' },
                 scrollbarWidth: 'thin',
                 scrollbarColor: 'rgba(0,0,0,0.28) transparent',
-                '&': { MsOverflowStyle: 'auto' }
-              }}>
-                <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 48 }, '& .MuiTableRow-root': { height: 48 } }}>
+                overflowClipMargin: 'content-box',
+                '& .MuiTable-root': { borderRadius: 2 }
+              }}
+            >
+              <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 40 }, '& .MuiTableRow-root': { height: 40 } }}>
                   <TableHead>
-                    <TableRow sx={{ height: 48 }}>
+                    <TableRow sx={{ height: 40 }}>
                       {lowStockColumns.map((col) => (
                         <TableCell key={col.field} sx={{ ...headerCellSx, py: 0.5 }}>
                           {col.headerName}
                         </TableCell>
                       ))}
-                      <TableCell sx={{ ...headerCellSx, right: 0, borderLeft: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pr: 1, py: 0.5, height: 48, minHeight: 48, '& .MuiIconButton-root': { height: 32, width: 32, p: 0 } }}>
+                      <TableCell sx={{ ...headerCellSx, right: 0, position: 'sticky', zIndex: 1250, borderLeft: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pr: 1, py: 0.5, height: 40, minHeight: 40, '& .MuiIconButton-root': { height: 32, width: 32, p: 0 } }}>
                         <Box sx={{ mr: 1 }}>Actions</Box>
                         <IconButton size="small" onClick={openColMenu} sx={{ p: 0 }} aria-label="Columns">
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>
@@ -1352,8 +1433,10 @@ const Inventory: React.FC = () => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {lowStockItems.map((item) => (
-                      <TableRow key={item.id} hover sx={{ height: 48 }}>
+                    {lowStockItems
+                      .slice(lowStockPage * lowStockRowsPerPage, lowStockPage * lowStockRowsPerPage + lowStockRowsPerPage)
+                      .map((item) => (
+                      <TableRow key={item.id} hover sx={{ height: 40 }}>
                         {/* sku */}
                         <TableCell sx={{ ...cellSx }}>{item.sku}</TableCell>
                         {/* name */}
@@ -1391,7 +1474,7 @@ const Inventory: React.FC = () => {
                         {/* location */}
                         <TableCell sx={cellSx}>{item.location || '-'}</TableCell>
 
-                        <TableCell sx={{ position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1240, borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap', pointerEvents: 'auto', height: 48, minHeight: 48, py: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', pr: 0, '& .MuiIconButton-root': { height: 32, width: 32, p: 0 } }}>
+                        <TableCell sx={{ position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 100, borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap', pointerEvents: 'auto', height: 40, minHeight: 40, py: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', pr: 0, '& .MuiIconButton-root': { height: 32, width: 32, p: 0 } }}>
                           <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', height: '100%', justifyContent: 'center' }}>
                             <Tooltip title="Adjust Stock">
                               <IconButton size="small" onClick={() => { setSelectedProduct(item); setAdjustmentDialog(true); }} disabled={!user || (user.role !== 'admin' && user.role !== 'manager')} sx={{ '& .MuiSvgIcon-root': { fontSize: 20 } }}>
@@ -1409,8 +1492,32 @@ const Inventory: React.FC = () => {
                     ))}
                   </TableBody>
                 </Table>
-              </Box>
             </TableContainer>
+            
+            {/* Pagination Controls for Low Stock */}
+            <TablePagination
+              rowsPerPageOptions={[10, 25, 50, 100]}
+              component="div"
+              count={lowStockItems.length}
+              rowsPerPage={lowStockRowsPerPage}
+              page={lowStockPage}
+              onPageChange={(event, newPage) => setLowStockPage(newPage)}
+              onRowsPerPageChange={(event) => {
+                setLowStockRowsPerPage(parseInt(event.target.value, 10));
+                setLowStockPage(0);
+              }}
+              sx={{
+                borderTop: '1px solid',
+                borderColor: 'divider',
+                '& .MuiTablePagination-toolbar': {
+                  minHeight: 48,
+                  px: 2
+                },
+                '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+                  fontSize: '14px'
+                }
+              }}
+            />
           </Paper>
         </Card>
       )}

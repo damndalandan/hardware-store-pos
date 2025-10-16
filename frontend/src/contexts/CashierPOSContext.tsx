@@ -400,7 +400,7 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
         customerAccountId: paymentData.customerAccountId ?? null,
         customerName: paymentData.customerName ?? null,
         cashier_id: user.id,
-        shift_id: currentShift.id,
+        shift_id: currentShift?.id ?? null,
       };
 
       const response = await fetch('/api/sales/enhanced', {
@@ -430,9 +430,9 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
         tax,
         total,
         cashierId: user.id,
-        cashierName: `${user.firstName} ${user.lastName}`,
+        cashierName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username,
         timestamp: new Date().toISOString(),
-        shiftId: currentShift.id,
+  shiftId: currentShift?.id ?? undefined,
         isOffline: false,
         synced: true
       };
@@ -448,13 +448,13 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
       }, {} as Record<string, number>);
 
       setCurrentShift({
-        ...currentShift,
-        totalSales: currentShift.totalSales + total,
-        totalTransactions: currentShift.totalTransactions + 1,
-        totalCash: currentShift.totalCash + (paymentTotals['cash'] || 0),
-        totalCard: currentShift.totalCard + (paymentTotals['credit_card'] || 0),
-        totalMobile: currentShift.totalMobile + (paymentTotals['gcash'] || paymentTotals['qr_ph'] || 0),
-        totalCheck: currentShift.totalCheck + (paymentTotals['check'] || 0)
+        ...(currentShift || {} as any),
+        totalSales: Number(currentShift?.totalSales || 0) + Number(total || 0),
+        totalTransactions: Number(currentShift?.totalTransactions || 0) + 1,
+        totalCash: Number(currentShift?.totalCash || 0) + Number(paymentTotals['cash'] || 0),
+        totalCard: Number(currentShift?.totalCard || 0) + Number(paymentTotals['credit_card'] || 0),
+        totalMobile: Number(currentShift?.totalMobile || 0) + Number(paymentTotals['gcash'] || paymentTotals['qr_ph'] || 0),
+        totalCheck: Number(currentShift?.totalCheck || 0) + Number(paymentTotals['check'] || 0)
       });
 
       // Refresh today's sales
@@ -500,9 +500,9 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
         customerName: customerInfo?.name,
         customerEmail: customerInfo?.email,
         cashierId: user.id,
-        cashierName: `${user.firstName} ${user.lastName}`,
+        cashierName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username,
         timestamp: new Date().toISOString(),
-        shiftId: currentShift.id,
+  shiftId: currentShift?.id ?? undefined,
         isOffline: isOffline,
         synced: !isOffline
       };
@@ -551,13 +551,13 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
       const checkAmount = payments.filter(p => p.method === 'check').reduce((sum, p) => sum + p.amount, 0);
 
       setCurrentShift({
-        ...currentShift,
-        totalSales: currentShift.totalSales + total,
-        totalTransactions: currentShift.totalTransactions + 1,
-        totalCash: currentShift.totalCash + cashAmount,
-        totalCard: currentShift.totalCard + cardAmount,
-        totalMobile: currentShift.totalMobile + mobileAmount,
-        totalCheck: currentShift.totalCheck + checkAmount
+        ...(currentShift || {} as any),
+        totalSales: Number(currentShift?.totalSales || 0) + Number(total || 0),
+        totalTransactions: Number(currentShift?.totalTransactions || 0) + 1,
+        totalCash: Number(currentShift?.totalCash || 0) + Number(cashAmount || 0),
+        totalCard: Number(currentShift?.totalCard || 0) + Number(cardAmount || 0),
+        totalMobile: Number(currentShift?.totalMobile || 0) + Number(mobileAmount || 0),
+        totalCheck: Number(currentShift?.totalCheck || 0) + Number(checkAmount || 0)
       });
 
       // Refresh today's sales
@@ -593,7 +593,7 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
         tax: -tax,
         total: -total,
         cashierId: user.id,
-        cashierName: `${user.firstName} ${user.lastName}`,
+        cashierName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username,
         timestamp: new Date().toISOString(),
         isRefund: true,
         originalSaleId,
@@ -740,7 +740,10 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
 
   // Shift Management
   const startShift = async (startingCash: number) => {
-    if (!user) return;
+    if (!user) {
+      setError('User not authenticated');
+      return;
+    }
     
     try {
       const response = await fetch('/api/shifts', {
@@ -748,7 +751,7 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
         headers: getAuthHeaders(),
         body: JSON.stringify({
           cashierId: user.id,
-          cashierName: `${user.firstName} ${user.lastName}`,
+          cashierName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username,
           startingCash,
           startTime: new Date().toISOString()
         }),
@@ -780,9 +783,9 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
     }
 
     try {
-      const cashDifference = endingCash - (currentShift.startingCash + currentShift.totalCash);
+      const cashDifference = endingCash - (Number(currentShift?.startingCash || 0) + Number(currentShift?.totalCash || 0));
       
-      const response = await fetch(`/api/shifts/${currentShift.id}/end`, {
+      const response = await fetch(`/api/shifts/${currentShift?.id}/end`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({
@@ -815,19 +818,20 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
 
   const getShiftSummary = () => {
     if (!currentShift) return null;
-    
-    const expectedCash = currentShift.startingCash + currentShift.totalCash;
-    
+
+    // Use defensive numeric conversions in case backend returns null/undefined
+    const expectedCash = Number(currentShift.startingCash || 0) + Number(currentShift.totalCash || 0);
+
     return {
       shift: currentShift,
-      totalSales: currentShift.totalSales,
-      totalTransactions: currentShift.totalTransactions,
+      totalSales: Number(currentShift.totalSales || 0),
+      totalTransactions: Number(currentShift.totalTransactions || 0),
       expectedCash,
       paymentBreakdown: {
-        cash: currentShift.totalCash,
-        card: currentShift.totalCard,
-        mobile: currentShift.totalMobile,
-        check: currentShift.totalCheck
+        cash: Number(currentShift.totalCash || 0),
+        card: Number(currentShift.totalCard || 0),
+        mobile: Number(currentShift.totalMobile || 0),
+        check: Number(currentShift.totalCheck || 0)
       }
     };
   };

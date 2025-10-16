@@ -55,10 +55,12 @@ interface PaymentSplit {
 
 interface Customer {
   id: number;
-  customer_code: string;
+  customer_code?: string;
   customer_name: string;
-  current_balance: number;
-  credit_limit: number;
+  current_balance?: number;
+  credit_limit?: number;
+  phone?: string;
+  email?: string;
 }
 
 interface EnhancedPaymentDialogProps {
@@ -210,8 +212,8 @@ const EnhancedPaymentDialog: React.FC<EnhancedPaymentDialogProps> = ({
 
   const fetchCustomers = async () => {
     try {
-      const response = await axios.get('/api/customer-accounts');
-      setCustomers(response.data.customers || []);
+      const response = await axios.get('/api/customers/with-ar');
+      setCustomers(response.data.customers || response.data || []);
     } catch (error) {
       console.error('Failed to load customers');
     }
@@ -398,8 +400,8 @@ const EnhancedPaymentDialog: React.FC<EnhancedPaymentDialogProps> = ({
                           </Box>
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Typography variant="body1" fontWeight="bold">
-                            ₱{payment.amount.toFixed(2)}
+                            <Typography variant="body1" fontWeight="bold">
+                            ₱{Number(payment.amount || 0).toFixed(2)}
                           </Typography>
                           <IconButton
                             size="small"
@@ -575,9 +577,13 @@ const EnhancedPaymentDialog: React.FC<EnhancedPaymentDialogProps> = ({
             {currentMethod === 'AR' && (
               <Autocomplete
                 options={customers}
-                getOptionLabel={(option) => 
-                  `${option.customer_code} - ${option.customer_name} (Credit: ₱${(option.credit_limit - option.current_balance).toFixed(2)})`
-                }
+                getOptionLabel={(option) => {
+                  if (option.customer_code) {
+                    const owed = Number(option.current_balance || 0);
+                    return `${option.customer_code} - ${option.customer_name} (Owes: ₱${owed.toFixed(2)})`;
+                  }
+                  return option.customer_name;
+                }}
                 value={selectedCustomer}
                 onChange={(_, newValue) => {
                   setSelectedCustomer(newValue);
@@ -720,7 +726,7 @@ const EnhancedPaymentDialog: React.FC<EnhancedPaymentDialogProps> = ({
                   <Autocomplete
                     options={customers}
                     getOptionLabel={(option) => 
-                      `${option.customer_code} - ${option.customer_name} (Credit: ₱${(option.credit_limit - option.current_balance).toFixed(2)})`
+                      `${option.customer_code} - ${option.customer_name} (Credit: ₱${((option.credit_limit || 0) - (option.current_balance || 0)).toFixed(2)})`
                     }
                     value={selectedCustomer}
                     onChange={(_, newValue) => {

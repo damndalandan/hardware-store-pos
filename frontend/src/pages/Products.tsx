@@ -4,7 +4,7 @@ import {
   DialogContent, DialogActions, Select, MenuItem, FormControl, InputLabel,
   Chip, Alert, Snackbar, Tooltip, IconButton, LinearProgress, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Popover, Menu, List, ListItem, ListItemIcon, ListItemText, Divider, Checkbox, TableSortLabel,
-  RadioGroup, FormControlLabel, Radio, Tabs, Tab, InputAdornment
+  RadioGroup, FormControlLabel, Radio, Tabs, Tab, InputAdornment, TablePagination
 } from '@mui/material';
 import {
   Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon, Search as SearchIcon,
@@ -16,7 +16,6 @@ import { DataGrid, GridColDef, GridRowSelectionModel } from '@mui/x-data-grid';
 import dataGridStickySx from '../utils/dataGridSticky';
 import axios from 'axios';
 import { saveAs } from 'file-saver';
-import Papa from 'papaparse';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -69,6 +68,7 @@ const Products: React.FC = () => {
   const [selectedProducts, setSelectedProducts] = useState<GridRowSelectionModel>([]);
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const isMounted = useRef(false);
   
   // Add component crash protection
   const [componentError, setComponentError] = useState<Error | null>(null);
@@ -121,8 +121,10 @@ const Products: React.FC = () => {
   const [filterCategory, setFilterCategory] = useState('');
   const [filterBrand, setFilterBrand] = useState('');
   const [debouncedFilterBrand, setDebouncedFilterBrand] = useState('');
-  const [showLowStock, setShowLowStock] = useState(false);
-  const [showInactive, setShowInactive] = useState(false);
+  
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
 
   // Table UI: sorting and filter popovers (category/brand)
   const [sortBy, setSortBy] = useState<string>('');
@@ -178,20 +180,19 @@ const Products: React.FC = () => {
   }, [filterBrand]);
 
   // Fetch data
-  const fetchProducts = useCallback(async () => {
-    if (loading) return; // Prevent multiple simultaneous requests
-
+  const fetchProducts = async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
+      // Add limit to improve initial load performance
+      params.append('limit', '1000');
       if (debouncedSearchTerm) params.append('search', debouncedSearchTerm);
       if (filterCategory) params.append('category', filterCategory);
       if (debouncedFilterBrand) params.append('brand', debouncedFilterBrand);
-      if (showLowStock) params.append('low_stock', 'true');
-      if (showInactive) params.append('active_only', 'false');
-      else params.append('active_only', 'true');
       
+      console.log('Fetching products from:', `${API_BASE_URL}/products?${params}`);
       const response = await axios.get(`${API_BASE_URL}/products?${params}`);
+      console.log('Products response:', response.data);
       
       // Backend returns { products: [...], pagination: {...} }
       const responseData = response.data;
@@ -215,14 +216,14 @@ const Products: React.FC = () => {
         window.location.reload();
         return;
       }
-      // Don't show error notification for suppliers - it's not critical
+      showNotification('Failed to load products', 'error');
     } finally {
       // Always clear loading when finished so UI buttons (like Create) aren't stuck disabled
       setLoading(false);
     }
-  }, [API_BASE_URL]);
+  };
 
-  const fetchCategories = useCallback(async () => {
+  const fetchCategories = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/products/categories/list`);
       const data = response.data;
@@ -232,9 +233,9 @@ const Products: React.FC = () => {
       console.error('Failed to fetch categories:', error);
       setCategories([]);
     }
-  }, [API_BASE_URL]);
+  };
 
-  const fetchSuppliers = useCallback(async () => {
+  const fetchSuppliers = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/suppliers`);
       const respData = response.data;
@@ -246,26 +247,14 @@ const Products: React.FC = () => {
       console.error('Failed to fetch suppliers:', error);
       setSuppliers([]);
     }
-  }, [API_BASE_URL]);
+  };
 
-  // Initial data load - run only once
+  // Initial data load
   useEffect(() => {
-    const initializeData = async () => {
-      try {
-        clearError();
-        // Load all data on mount
-        await Promise.all([
-          fetchProducts(),
-          fetchCategories(),
-          fetchSuppliers()
-        ]);
-      } catch (error) {
-        handleError(error, 'Data initialization failed');
-      }
-    };
-    
-    initializeData();
-  }, []); // Only run once on mount
+    fetchProducts();
+    fetchCategories();
+    fetchSuppliers();
+  }, []); // Run once on mount
 
   // Add global error handler
   useEffect(() => {
@@ -290,8 +279,14 @@ const Products: React.FC = () => {
     };
   }, []);
 
-  // Re-fetch products when filters change
+  // Re-fetch products when filters change (skip initial mount)
   useEffect(() => {
+    // Skip initial mount - data already loaded
+    if (!isMounted.current) {
+      isMounted.current = true;
+      return;
+    }
+    
     // Skip if still debouncing
     if (debouncedSearchTerm !== searchTerm || debouncedFilterBrand !== filterBrand) {
       return; // Wait for debouncing to complete
@@ -302,17 +297,17 @@ const Products: React.FC = () => {
       return;
     }
     
-    // Only fetch products if we have initial data loaded or filters are applied
-    const hasFilters = debouncedSearchTerm || filterCategory || debouncedFilterBrand || showLowStock || !showInactive;
-    if (products.length > 0 || hasFilters) {
-      try {
-        fetchProducts();
-      } catch (error) {
-        console.error('Error in products useEffect:', error);
-        setComponentError(error as Error);
-      }
+    // Reset page when filters change
+    setPage(0);
+    
+    // Fetch products whenever filters change
+    try {
+      fetchProducts();
+    } catch (error) {
+      console.error('Error in products useEffect:', error);
+      setComponentError(error as Error);
     }
-  }, [debouncedSearchTerm, filterCategory, debouncedFilterBrand, showLowStock, showInactive]);
+  }, [debouncedSearchTerm, filterCategory, debouncedFilterBrand]);
 
   // Sorting helper (client-side)
   const handleRequestSort = (field: string) => {
@@ -766,7 +761,6 @@ const Products: React.FC = () => {
       setLoading(true);
       const params = new URLSearchParams();
       if (filterCategory) params.append('category', filterCategory);
-      if (!showInactive) params.append('active_only', 'true');
       
       const response = await axios.get(`${API_BASE_URL}/products/export/csv?${params}`, {
         responseType: 'blob'
@@ -781,105 +775,6 @@ const Products: React.FC = () => {
       showNotification('Failed to export products', 'error');
     } finally {
       setLoading(false);
-    }
-  };
-
-  // CSV Import helpers
-  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
-
-  const triggerImport = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      setLoading(true);
-      
-      // Use papaparse for robust CSV parsing
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        transformHeader: (header: string) => header.trim(),
-        complete: async (results) => {
-          const rows = results.data as any[];
-          
-          if (!rows.length) {
-            showNotification('No rows found in CSV', 'error');
-            setLoading(false);
-            return;
-          }
-
-          // Map CSV columns to backend fields - support multiple header variations
-          let successCount = 0;
-          let errorCount = 0;
-          const errors: string[] = [];
-
-          for (let i = 0; i < rows.length; i++) {
-            const r = rows[i];
-            
-            // Skip empty rows
-            if (!r.name && !r.product_name && !r.sku && !r.SKU) {
-              continue;
-            }
-
-            const payload = {
-              sku: r.sku || r.SKU || '',
-              barcode: r.barcode || r.Barcode || null,
-              name: r.name || r.product_name || r['Product Name'] || '',
-              brand: r.brand || r.Brand || null,
-              description: r.description || r.Description || null,
-              categoryId: r.categoryId || r.category_id || r['Category ID'] ? 
-                Number(r.categoryId || r.category_id || r['Category ID']) : null,
-              size: r.size || r.Size || null,
-              variety: r.variety || r.Variety || null,
-              color: r.color || r.Color || null,
-              unit: r.unit || r.Unit || 'pcs',
-              costPrice: Number(r.costPrice || r.cost_price || r['Cost Price'] || 0) || 0,
-              sellingPrice: Number(r.sellingPrice || r.selling_price || r['Selling Price'] || 0) || 0,
-              minStockLevel: Number(r.minStockLevel || r.min_stock_level || r['Min Stock Level'] || 0) || 0,
-              maxStockLevel: Number(r.maxStockLevel || r.max_stock_level || r['Max Stock Level'] || 0) || 0,
-              supplierId: r.supplierId || r.supplier_id || r['Supplier ID'] ? 
-                Number(r.supplierId || r.supplier_id || r['Supplier ID']) : null,
-              initialStock: Number(r.initialStock || r.initial_stock || r.current_stock || r['Current Stock'] || r['Initial Stock'] || 0) || 0
-            };
-
-            try {
-              await axios.post(`${API_BASE_URL}/products`, payload);
-              successCount++;
-            } catch (err: any) {
-              errorCount++;
-              const errorMsg = err.response?.data?.error || err.message || 'Unknown error';
-              errors.push(`Row ${i + 2}: ${errorMsg}`);
-            }
-          }
-
-          // Show detailed results
-          if (successCount > 0) {
-            showNotification(`Successfully imported ${successCount} of ${rows.length} products`, 'success');
-          }
-          if (errorCount > 0) {
-            console.error('Import errors:', errors.slice(0, 10)); // Log first 10 errors
-            showNotification(`Failed to import ${errorCount} products. Check console for details.`, 'error');
-          }
-          
-          fetchProducts();
-          setLoading(false);
-        },
-        error: (error) => {
-          console.error('CSV parse error:', error);
-          showNotification('Failed to parse CSV file', 'error');
-          setLoading(false);
-        }
-      });
-    } catch (err) {
-      console.error('Import failed', err);
-      showNotification('Failed to import CSV', 'error');
-      setLoading(false);
-    } finally {
-      // Reset input
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -1114,7 +1009,7 @@ const Products: React.FC = () => {
 
   // Column customization state: order and visibility
   const defaultColumnsState = [
-    { key: 'select', label: '', visible: true, fixed: true },
+    { key: 'select', label: 'Select', visible: true },
     { key: 'sku', label: 'SKU', visible: true },
     { key: 'name', label: 'Product Name', visible: true },
     { key: 'brand', label: 'Brand', visible: true },
@@ -1227,9 +1122,18 @@ const Products: React.FC = () => {
   };
 
   // Helper to get conditional display style for columns
-  const getColumnStyle = (columnKey: string) => ({
-    display: visibleColumns[columnKey] === false ? 'none' : undefined
-  });
+  const getColumnStyle = (columnKey: string) => {
+    const isHidden = visibleColumns[columnKey] === false;
+    const isSelectHidden = visibleColumns['select'] === false;
+    // Add left padding to first visible column when select is hidden
+    const isFirstColumn = columnKey === 'sku' || (columnKey === 'name' && visibleColumns['sku'] === false);
+    const needsPadding = isSelectHidden && isFirstColumn && !isHidden;
+    
+    return {
+      display: isHidden ? 'none' : undefined,
+      pl: needsPadding ? 4 : undefined
+    };
+  };
 
   const formatLabel = (key: string) => {
     if (key.toLowerCase() === 'sku') return 'SKU';
@@ -1342,7 +1246,7 @@ const Products: React.FC = () => {
         <Card sx={{ mb: 3, backgroundColor: '#fff', borderRadius: 2, boxShadow: 1 }}>
           <CardContent sx={{ p: 2 }}>
           <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={3}>
+            <Grid item xs={12} md={4}>
               <TextField
                 fullWidth
                 placeholder="Search products..."
@@ -1374,8 +1278,8 @@ const Products: React.FC = () => {
             </Grid>
             {/* Category quick filter removed from header as requested; keep header table filter button intact */}
             {/* Brand quick filter removed from header as requested; keep header table filter button intact */}
-            <Grid item xs={12} md={5}>
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'nowrap', alignItems: 'center' }}>
+            <Grid item xs={12} md={8}>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
                 <Button
                   variant="outlined"
                   startIcon={<AddIcon />}
@@ -1398,16 +1302,6 @@ const Products: React.FC = () => {
                 >
                   Export
                 </Button>
-                <input ref={fileInputRef} type="file" accept="text/csv,.xlsx,.xls" style={{ display: 'none' }} onChange={handleFileSelected} />
-                <Button
-                  variant="outlined"
-                  startIcon={<UploadIcon />}
-                  onClick={triggerImport}
-                  disabled={!user || (user.role !== 'admin' && user.role !== 'manager') || loading}
-                  sx={{ borderRadius: 2, textTransform: 'none', minHeight: 36, px: 2, whiteSpace: 'nowrap' }}
-                >
-                  Import CSV
-                </Button>
                 <Button
                   variant="contained"
                   startIcon={<UploadIcon />}
@@ -1429,22 +1323,6 @@ const Products: React.FC = () => {
               </Box>
             </Grid>
           </Grid>
-
-          {/* Filter chips */}
-          <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            <Chip
-              label={`Low Stock Only: ${showLowStock ? 'On' : 'Off'}`}
-              onClick={() => setShowLowStock(!showLowStock)}
-              color={showLowStock ? 'primary' : 'default'}
-              variant={showLowStock ? 'filled' : 'outlined'}
-            />
-            <Chip
-              label={`Show Inactive: ${showInactive ? 'On' : 'Off'}`}
-              onClick={() => setShowInactive(!showInactive)}
-              color={showInactive ? 'warning' : 'default'}
-              variant={showInactive ? 'filled' : 'outlined'}
-            />
-          </Box>
           </CardContent>
         </Card>
       )}
@@ -1498,10 +1376,10 @@ const Products: React.FC = () => {
                 MsOverflowStyle: 'auto'
               }
             }}>
-              <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 48 }, '& .MuiTableRow-root': { height: 48 } }}>
+              <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 40 }, '& .MuiTableRow-root': { height: 40 } }}>
                   <TableHead>
-                    <TableRow sx={{ height: 48 }}>
-                      <TableCell sx={{ ...headerCellSx, width: 48, py: 0.5, zIndex: 1300 }}>
+                    <TableRow sx={{ height: 40 }}>
+                      <TableCell sx={{ ...headerCellSx, width: 48, py: 0.5, zIndex: 1300, ...getColumnStyle('select') }}>
                         <Checkbox
                           checked={isAllSelected}
                           indeterminate={(selectedProducts as number[]).length > 0 && (selectedProducts as number[]).length < products.length}
@@ -1573,8 +1451,8 @@ const Products: React.FC = () => {
                           alignItems: 'center',
                           justifyContent: 'flex-end',
                           gap: 1,
-                          height: 48,
-                          minHeight: 48
+                          height: 40,
+                          minHeight: 40
                         }}>
                           <Box sx={{ mr: 1 }}>Actions</Box>
                           <IconButton size="small" onClick={openColMenu} sx={{ p: 0.5 }} aria-label="Columns">
@@ -1586,9 +1464,29 @@ const Products: React.FC = () => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {products.map((item) => (
-                      <TableRow key={item.id} hover sx={{ height: 48 }}>
-                        <TableCell sx={{ ...cellSx, py: .5 }}>
+                    {products.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={14} sx={{ textAlign: 'center', py: 8 }}>
+                          {loading ? (
+                            <>
+                              <CircularProgress size={40} />
+                              <Typography variant="body2" sx={{ mt: 2, color: 'text.secondary' }}>
+                                Loading products...
+                              </Typography>
+                            </>
+                          ) : (
+                            <Typography variant="body2" color="text.secondary">
+                              No products found
+                            </Typography>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      products
+                        .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+                        .map((item) => (
+                      <TableRow key={item.id} hover sx={{ height: 40 }}>
+                        <TableCell sx={{ ...cellSx, py: .5, ...getColumnStyle('select') }}>
                           <Checkbox
                             checked={(selectedProducts as number[]).includes(item.id)}
                             onChange={() => toggleRowSelected(item.id)}
@@ -1612,8 +1510,8 @@ const Products: React.FC = () => {
                             <Typography noWrap>{item.current_stock}</Typography>
                           </Box>
                         </TableCell>
-                        <TableCell sx={{ position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1100, borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap', pointerEvents: 'auto', pr: 0, py: 0.5, '& .MuiIconButton-root': { height: 32, width: 32, p: 0 } }}>
-                          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', justifyContent: 'center', height: 48, minHeight: 48 }}>
+                        <TableCell sx={{ position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1400, WebkitBackgroundClip: 'padding-box', backgroundClip: 'padding-box', boxShadow: '-6px 0 12px rgba(0,0,0,0.04)', borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap', pointerEvents: 'auto', pr: 0, py: 0.5, '& .MuiIconButton-root': { height: 32, width: 32, p: 0 } }}>
+                          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', justifyContent: 'center', height: 40, minHeight: 40 }}>
                             <Tooltip title="Edit Product">
                               <IconButton size="small" onClick={() => { setEditingProduct(item); setProductDialog(true); }} disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}>
                                 <EditIcon fontSize="small" />
@@ -1628,11 +1526,37 @@ const Products: React.FC = () => {
                           </Box>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    )))}
                   </TableBody>
                 </Table>
               </Box>
             </TableContainer>
+            
+            {/* Pagination Controls */}
+            <TablePagination
+              rowsPerPageOptions={[10, 25, 50, 100]}
+              component="div"
+              count={products.length}
+              rowsPerPage={rowsPerPage}
+              page={page}
+              onPageChange={(event, newPage) => setPage(newPage)}
+              onRowsPerPageChange={(event) => {
+                setRowsPerPage(parseInt(event.target.value, 10));
+                setPage(0);
+              }}
+              sx={{
+                borderTop: '1px solid',
+                borderColor: 'divider',
+                '& .MuiTablePagination-toolbar': {
+                  minHeight: 48,
+                  px: 2
+                },
+                '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+                  fontSize: '14px'
+                }
+              }}
+            />
+            
             {/* Column visibility menu (keeps shape consistent with Inventory) */}
             <Menu
               anchorEl={colMenuAnchor}

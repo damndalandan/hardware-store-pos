@@ -217,40 +217,55 @@ export async function processEnhancedSale(
       `, [item.productId, -item.quantity, saleId, cashierId]);
     }
 
-    // Handle AR transaction if customer account is specified
-    if (customerAccountId) {
-      const arPayment = paymentSplits.find(p => p.paymentMethod === 'AR');
-      if (arPayment && arPayment.amount > 0) {
-        // Get current balance
-        const [customerRows] = await connection.execute(
-          'SELECT current_balance, credit_limit FROM customer_accounts WHERE id = ?',
-          [customerAccountId]
+    // Handle AR transaction if customer account is specified OR if AR payment exists
+    const arPayment = paymentSplits.find(p => p.paymentMethod === 'AR');
+    if (arPayment && arPayment.amount > 0) {
+      let arCustomerId = customerAccountId || customerId;
+      
+      // If no customer ID specified but customer name exists, find the customer
+      if (!arCustomerId && customerName) {
+        const [arCustomerRows] = await connection.execute(
+          'SELECT id, current_balance FROM customers WHERE LOWER(customer_name) = LOWER(?)',
+          [customerName.trim()]
         );
-        const customer = (customerRows as any[])[0];
-
-        if (!customer) {
-          throw new Error(`Customer account ${customerAccountId} not found`);
+        if ((arCustomerRows as any[]).length > 0) {
+          arCustomerId = (arCustomerRows as any[])[0].id;
         }
-
-        const newBalance = parseFloat(customer.current_balance) + arPayment.amount;
-        if (newBalance > parseFloat(customer.credit_limit)) {
-          throw new Error(`Transaction exceeds customer credit limit`);
-        }
-
-        // Create AR transaction
-        await connection.execute(`
-          INSERT INTO ar_transactions (
-            customer_account_id, sale_id, transaction_type, amount,
-            balance_after, payment_method, reference_number, processed_by
-          ) VALUES (?, ?, 'charge', ?, ?, 'AR', ?, ?)
-        `, [customerAccountId, saleId, arPayment.amount, newBalance, saleNumber, cashierId]);
-
-        // Update customer balance
-        await connection.execute(
-          'UPDATE customer_accounts SET current_balance = ? WHERE id = ?',
-          [newBalance, customerAccountId]
-        );
       }
+      
+      if (!arCustomerId) {
+        throw new Error(`Customer name is required for AR payment method`);
+      }
+
+      // Get current balance from customers table (no credit limit check - track debt owed)
+      const [customerRows] = await connection.execute(
+        'SELECT id, customer_name, current_balance FROM customers WHERE id = ?',
+        [arCustomerId]
+      );
+      const arCustomer = (customerRows as any[])[0];
+
+      if (!arCustomer) {
+        throw new Error(`Customer account ${arCustomerId} not found`);
+      }
+
+      // Add to amount owed (no credit limit - customer owes us money)
+      const newBalance = parseFloat(arCustomer.current_balance || 0) + arPayment.amount;
+
+      // Create AR transaction
+      await connection.execute(`
+        INSERT INTO ar_transactions (
+          customer_id, sale_id, transaction_type, amount,
+          balance_after, payment_method, reference_number, processed_by
+        ) VALUES (?, ?, 'charge', ?, ?, 'AR', ?, ?)
+      `, [arCustomerId, saleId, arPayment.amount, newBalance, saleNumber, cashierId]);
+
+      // Update customer balance (amount they owe)
+      await connection.execute(
+        'UPDATE customers SET current_balance = ? WHERE id = ?',
+        [newBalance, arCustomerId]
+      );
+      
+      logger.info(`AR charge: ₱${arPayment.amount} to ${arCustomer.customer_name}, new debt owed: ₱${newBalance}`);
     }
 
     // Update shift totals

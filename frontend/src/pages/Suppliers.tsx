@@ -881,7 +881,7 @@ const Suppliers: React.FC = () => {
                             })}
 
                             <TableCell sx={{
-                              position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1300, borderLeft: '1px solid', borderColor: 'divider', py: 0.5,
+                              position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1400, WebkitBackgroundClip: 'padding-box', backgroundClip: 'padding-box', boxShadow: '-6px 0 12px rgba(0,0,0,0.04)', borderLeft: '1px solid', borderColor: 'divider', py: 0.5,
                               display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'center', '& .MuiIconButton-root': { height: 32, width: 32, p: 0 },
                                 // keep action cell aligned with row height and allow pointer events
                                 height: 48,

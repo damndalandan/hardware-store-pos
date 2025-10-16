@@ -61,7 +61,7 @@ const router = express.Router();
 
 // Get inventory levels
 router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: express.Response) => {
-  const { location, low_stock_only = 'false' } = req.query;
+  const { location, low_stock_only = 'false', limit = '1000' } = req.query;
   const pool = getPool();
 
   let whereClause = 'WHERE p.is_active = 1';
@@ -97,7 +97,8 @@ router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: express.Resp
     ORDER BY 
       CASE WHEN i.current_stock <= p.min_stock_level THEN 0 ELSE 1 END,
       p.name
-  `, params);
+    LIMIT ?
+  `, [...params, Number(limit)]);
   const inventory = rows as any[];
 
   res.json(inventory);

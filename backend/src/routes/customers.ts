@@ -13,13 +13,13 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
-// Get customers with A/R account data (JOIN with customer_accounts)
+// Get customers with A/R account data
 router.get('/with-ar', authenticateToken, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const { search, page = 1, limit = 100, hasArOnly } = req.query;
   const pool = getPool();
 
   let query = `
-    SELECT 
+    SELECT DISTINCT
       c.id,
       c.customer_name,
       c.phone,
@@ -29,36 +29,45 @@ router.get('/with-ar', authenticateToken, asyncHandler(async (req: Request, res:
       c.total_purchases,
       c.last_purchase_date,
       c.created_at,
-      ca.customer_code,
-      ca.current_balance,
-      ca.credit_limit,
-      ca.is_active
+      c.customer_code,
+      c.contact_person,
+      COALESCE(c.current_balance, 0) as current_balance,
+      COALESCE(c.credit_limit, 0) as credit_limit,
+      c.is_active,
+      (SELECT COUNT(*) FROM ar_transactions WHERE customer_id = c.id) as transaction_count
     FROM customers c
-    LEFT JOIN customer_accounts ca ON c.customer_name = ca.customer_name
     WHERE 1=1
   `;
   
   const params: any[] = [];
 
-  // Filter only customers with A/R accounts if requested
+  // Filter only customers with A/R activity if requested
   if (hasArOnly === 'true') {
-    query += ' AND ca.id IS NOT NULL';
+    query += ` AND (
+      c.current_balance > 0 
+      OR c.customer_code IS NOT NULL 
+      OR EXISTS (
+        SELECT 1 FROM ar_transactions 
+        WHERE customer_id = c.id 
+        AND (payment_method = 'AR' OR transaction_type IN ('payment', 'adjustment'))
+      )
+    )`;
   }
   
   if (search) {
-    query += ' AND (c.customer_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR ca.customer_code LIKE ?)';
+    query += ' AND (c.customer_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.customer_code LIKE ?)';
     const searchTerm = `%${search}%`;
     params.push(searchTerm, searchTerm, searchTerm, searchTerm);
   }
 
   // Get total count for pagination
-  const countQuery = query.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(*) as total FROM');
+  const countQuery = query.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(DISTINCT c.id) as total FROM');
   const [countResult] = await pool.execute(countQuery, params);
   const total = (countResult as any[])[0]?.total || 0;
 
   // Add pagination
   const offset = (Number(page) - 1) * Number(limit);
-  query += ' ORDER BY c.last_purchase_date DESC, c.customer_name ASC LIMIT ? OFFSET ?';
+  query += ' ORDER BY c.current_balance DESC, c.last_purchase_date DESC, c.customer_name ASC LIMIT ? OFFSET ?';
   params.push(Number(limit), offset);
 
   const [customers] = await pool.execute(query, params);
@@ -179,9 +188,19 @@ router.post('/find-or-create', authenticateToken, asyncHandler(async (req: Reque
 
 // Create a new customer manually
 router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const { customer_name, phone, email, address, notes } = req.body;
+  const { 
+    customer_name, customerName, phone, email, address, notes,
+    customer_code, customerCode, contact_person, contactPerson, 
+    credit_limit, creditLimit, is_active 
+  } = req.body;
 
-  if (!customer_name || !customer_name.trim()) {
+  // Support both snake_case and camelCase
+  const finalCustomerName = customer_name || customerName;
+  const finalCustomerCode = customer_code || customerCode;
+  const finalContactPerson = contact_person || contactPerson;
+  const finalCreditLimit = credit_limit || creditLimit;
+
+  if (!finalCustomerName || !finalCustomerName.trim()) {
     res.status(400).json({ message: 'Customer name is required' });
     return;
   }
@@ -191,7 +210,7 @@ router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Respo
   // Check if customer already exists
   const [existingCustomers] = await pool.execute(
     'SELECT id FROM customers WHERE LOWER(customer_name) = LOWER(?)',
-    [customer_name.trim()]
+    [finalCustomerName.trim()]
   );
 
   if ((existingCustomers as any[]).length > 0) {
@@ -199,17 +218,35 @@ router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Respo
     return;
   }
 
+  // Check if customer_code already exists (if provided)
+  if (finalCustomerCode) {
+    const [existingCode] = await pool.execute(
+      'SELECT id FROM customers WHERE customer_code = ?',
+      [finalCustomerCode]
+    );
+    if ((existingCode as any[]).length > 0) {
+      res.status(400).json({ message: 'Customer code already exists' });
+      return;
+    }
+  }
+
   // Create new customer
   const [result] = await pool.execute(`
     INSERT INTO customers (
-      customer_name, phone, email, address, notes, total_purchases, last_purchase_date
-    ) VALUES (?, ?, ?, ?, ?, 0, NULL)
+      customer_name, phone, email, address, notes, 
+      customer_code, contact_person, credit_limit, current_balance, is_active,
+      total_purchases, last_purchase_date
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.00, ?, 0, NULL)
   `, [
-    customer_name.trim(),
+    finalCustomerName.trim(),
     phone || null,
     email || null,
     address || null,
-    notes || null
+    notes || null,
+    finalCustomerCode || null,
+    finalContactPerson || null,
+    finalCreditLimit || 0.00,
+    is_active !== undefined ? is_active : 1
   ]) as any;
 
   const customerId = result.insertId;
@@ -219,7 +256,7 @@ router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Respo
     [customerId]
   );
 
-  logger.info(`New customer created manually: ${customer_name}`);
+  logger.info(`New customer created manually: ${finalCustomerName}`);
 
   res.status(201).json({
     customer: (newCustomer as any[])[0]
@@ -229,7 +266,10 @@ router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Respo
 // Update customer
 router.put('/:id', authenticateToken, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;
-  const { customer_name, phone, email, address, notes } = req.body;
+  const { 
+    customer_name, phone, email, address, notes,
+    customer_code, contact_person, credit_limit, is_active 
+  } = req.body;
 
   if (!customer_name || !customer_name.trim()) {
     res.status(400).json({ message: 'Customer name is required' });
@@ -256,6 +296,18 @@ router.put('/:id', authenticateToken, asyncHandler(async (req: Request, res: Res
     return;
   }
 
+  // Check if customer_code already exists (if provided and changed)
+  if (customer_code) {
+    const [existingCode] = await pool.execute(
+      'SELECT id FROM customers WHERE customer_code = ? AND id != ?',
+      [customer_code, id]
+    );
+    if ((existingCode as any[]).length > 0) {
+      res.status(400).json({ message: 'Customer code already exists' });
+      return;
+    }
+  }
+
   // Update customer
   await pool.execute(`
     UPDATE customers 
@@ -265,6 +317,10 @@ router.put('/:id', authenticateToken, asyncHandler(async (req: Request, res: Res
       email = ?,
       address = ?,
       notes = ?,
+      customer_code = ?,
+      contact_person = ?,
+      credit_limit = ?,
+      is_active = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
@@ -273,6 +329,10 @@ router.put('/:id', authenticateToken, asyncHandler(async (req: Request, res: Res
     email || null,
     address || null,
     notes || null,
+    customer_code || null,
+    contact_person || null,
+    credit_limit !== undefined ? credit_limit : null,
+    is_active !== undefined ? is_active : null,
     id
   ]);
 
@@ -440,6 +500,194 @@ router.get('/:customerId/sales/:saleId', authenticateToken, asyncHandler(async (
   res.json({
     ...sale,
     items: itemRows
+  });
+}));
+
+// Get customer AR transactions
+router.get('/:id/ar-transactions', authenticateToken, asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const pool = getPool();
+
+  // Get customer with AR data
+  const [customerRows] = await pool.execute(
+    'SELECT * FROM customers WHERE id = ?',
+    [id]
+  );
+
+  if ((customerRows as any[]).length === 0) {
+    res.status(404).json({ message: 'Customer not found' });
+    return;
+  }
+
+  // Get recent transactions
+  const [transactions] = await pool.execute(`
+    SELECT 
+      art.*,
+      u.username as processed_by_name,
+      s.sale_number
+    FROM ar_transactions art
+    LEFT JOIN users u ON art.processed_by = u.id
+    LEFT JOIN sales s ON art.sale_id = s.id
+    WHERE art.customer_id = ?
+      AND (
+        art.payment_method = 'AR' 
+        OR art.transaction_type IN ('payment', 'adjustment')
+      )
+    ORDER BY art.transaction_date DESC
+    LIMIT 50
+  `, [id]);
+
+  const customer = (customerRows as any[])[0];
+
+  res.json({
+    ...customer,
+    transactions
+  });
+}));
+
+// Create AR transaction (charge, payment, or adjustment)
+router.post('/:id/ar-transactions', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const {
+    transactionType,
+    amount,
+    paymentMethod,
+    referenceNumber,
+    notes,
+    saleId
+  } = req.body;
+
+  if (!transactionType || !amount) {
+    res.status(400).json({ message: 'Transaction type and amount are required' });
+    return;
+  }
+
+  const pool = getPool();
+
+  // Get current balance (amount customer owes)
+  const [customerRows] = await pool.execute(
+    'SELECT current_balance, customer_name FROM customers WHERE id = ?',
+    [id]
+  );
+
+  if ((customerRows as any[]).length === 0) {
+    res.status(404).json({ message: 'Customer not found' });
+    return;
+  }
+
+  const customer = (customerRows as any[])[0];
+  const currentBalance = parseFloat(customer.current_balance || 0);
+
+  // Calculate new balance (debt tracking system)
+  let balanceAfter = currentBalance;
+  if (transactionType === 'charge') {
+    balanceAfter += parseFloat(amount); // Increase debt owed
+  } else if (transactionType === 'payment') {
+    balanceAfter -= parseFloat(amount); // Reduce debt owed
+    // Prevent negative balance (can't pay more than owed unless intentional)
+    if (balanceAfter < 0) {
+      balanceAfter = 0; // Can't have negative debt
+    }
+  } else if (transactionType === 'adjustment') {
+    balanceAfter += parseFloat(amount); // Can be positive or negative
+  }
+
+  // Insert transaction
+  await pool.execute(`
+    INSERT INTO ar_transactions (
+      customer_id, sale_id, transaction_type, amount, balance_after,
+      payment_method, reference_number, notes, processed_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    id,
+    saleId || null,
+    transactionType,
+    amount,
+    balanceAfter,
+    paymentMethod || null,
+    referenceNumber || null,
+    notes || null,
+    req.user!.id
+  ]);
+
+  // Update customer balance
+  await pool.execute(
+    'UPDATE customers SET current_balance = ? WHERE id = ?',
+    [balanceAfter, id]
+  );
+
+  logger.info(`AR ${transactionType}: ${customer.customer_name} - Amount: ₱${amount}, Previous: ₱${currentBalance}, New: ₱${balanceAfter}, User: ${req.user!.id}`);
+
+  res.json({
+    success: true,
+    previousBalance: currentBalance,
+    newBalance: balanceAfter,
+    transactionType,
+    amount
+  });
+}));
+
+// Get all AR transactions across all customers
+router.get('/ar-transactions/all', authenticateToken, asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const { page = 1, limit = 50, search, startDate, endDate } = req.query;
+  const pool = getPool();
+
+  let query = `
+    SELECT 
+      art.*,
+      c.customer_name,
+      c.phone,
+      c.email,
+      u.username as processed_by_name,
+      s.sale_number
+    FROM ar_transactions art
+    INNER JOIN customers c ON art.customer_id = c.id
+    LEFT JOIN users u ON art.processed_by = u.id
+    LEFT JOIN sales s ON art.sale_id = s.id
+    WHERE (
+      art.payment_method = 'AR' 
+      OR art.transaction_type IN ('payment', 'adjustment')
+    )
+  `;
+  
+  const params: any[] = [];
+  
+  if (search) {
+    query += ' AND (c.customer_name LIKE ? OR c.phone LIKE ? OR s.sale_number LIKE ?)';
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm);
+  }
+
+  if (startDate) {
+    query += ' AND DATE(art.transaction_date) >= ?';
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    query += ' AND DATE(art.transaction_date) <= ?';
+    params.push(endDate);
+  }
+
+  // Get total count for pagination
+  const countQuery = query.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(*) as total FROM');
+  const [countResult] = await pool.execute(countQuery, params);
+  const total = (countResult as any[])[0]?.total || 0;
+
+  // Add pagination
+  const offset = (Number(page) - 1) * Number(limit);
+  query += ' ORDER BY art.transaction_date DESC LIMIT ? OFFSET ?';
+  params.push(Number(limit), offset);
+
+  const [transactions] = await pool.execute(query, params);
+
+  res.json({
+    transactions,
+    pagination: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+      pages: Math.ceil(total / Number(limit))
+    }
   });
 }));
 

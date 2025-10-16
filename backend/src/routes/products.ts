@@ -72,7 +72,7 @@ const router = express.Router();
 router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: express.Response) => {
   const { 
     page = 1, 
-    limit = 50, 
+    limit = 1000, // Increased default limit for better performance
     search, 
     category, 
     brand, 
@@ -112,7 +112,10 @@ router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: express.Resp
 
   const query = `
     SELECT 
-      p.*,
+      p.id, p.sku, p.barcode, p.name, p.brand, p.description,
+      p.category_id, p.size, p.variety, p.color, p.unit,
+      p.cost_price, p.selling_price, p.min_stock_level, p.max_stock_level,
+      p.supplier_id, p.is_active, p.created_at, p.updated_at,
       c.name as category_name,
       s.name as supplier_name,
       COALESCE(i.current_stock, 0) as current_stock,
@@ -157,7 +160,10 @@ router.get('/:identifier', asyncHandler(async (req: AuthenticatedRequest, res: e
 
   const [rows] = await pool.execute(`
     SELECT 
-      p.*,
+      p.id, p.sku, p.barcode, p.name, p.brand, p.description,
+      p.category_id, p.size, p.variety, p.color, p.unit,
+      p.cost_price, p.selling_price, p.min_stock_level, p.max_stock_level,
+      p.supplier_id, p.is_active, p.created_at, p.updated_at,
       c.name as category_name,
       s.name as supplier_name,
       COALESCE(i.current_stock, 0) as current_stock,

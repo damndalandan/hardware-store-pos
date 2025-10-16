@@ -197,6 +197,30 @@ router.post('/:shiftId/end', authenticateToken, asyncHandler(async (req: Request
   const [endedShiftRows] = await pool.execute('SELECT * FROM shifts WHERE id = ?', [shiftId]);
   const endedShift = (endedShiftRows as Shift[])[0];
 
+  // Get expenses for this shift
+  const [expensesRows] = await pool.execute(`
+    SELECT 
+      category,
+      SUM(amount) as total_amount,
+      COUNT(*) as count
+    FROM expenses
+    WHERE shift_id = ?
+    GROUP BY category
+  `, [shiftId]);
+
+  const expenses = (expensesRows as any[]).map(exp => ({
+    category: exp.category,
+    totalAmount: exp.total_amount,
+    count: exp.count
+  }));
+
+  // Get total expenses
+  const [expensesTotalRows] = await pool.execute(`
+    SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE shift_id = ?
+  `, [shiftId]);
+  
+  const totalExpenses = (expensesTotalRows as any[])[0]?.total || 0;
+
   logger.info(`Shift ended for shift ID: ${shiftId}`);
 
   res.json({
@@ -214,7 +238,9 @@ router.post('/:shiftId/end', authenticateToken, asyncHandler(async (req: Request
     totalMobile: endedShift.total_mobile,
     totalCheck: endedShift.total_check,
     isActive: false,
-    cashDifference: endedShift.cash_difference
+    cashDifference: endedShift.cash_difference,
+    expenses: expenses,
+    totalExpenses: totalExpenses
   });
 }));
 

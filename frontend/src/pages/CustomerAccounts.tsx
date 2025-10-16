@@ -44,6 +44,10 @@ interface ARTransaction {
   balance_after: number;
   transaction_date: string;
   notes?: string;
+  customer_name?: string;
+  phone?: string;
+  sale_number?: string;
+  processed_by_name?: string;
 }
 
 const CustomerAccounts: React.FC = () => {
@@ -57,6 +61,15 @@ const CustomerAccounts: React.FC = () => {
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerAccount | null>(null);
   const [customerTransactions, setCustomerTransactions] = useState<ARTransaction[]>([]);
+  const [activeTab, setActiveTab] = useState(0);
+  
+  // For all transactions view
+  const [allTransactions, setAllTransactions] = useState<ARTransaction[]>([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [transactionsTotalCount, setTransactionsTotalCount] = useState(0);
+  const [transactionsPage, setTransactionsPage] = useState(0);
+  const [transactionsPageSize, setTransactionsPageSize] = useState(25);
+  const [transactionsSearchText, setTransactionsSearchText] = useState('');
 
   const [newCustomerForm, setNewCustomerForm] = useState({
     customerCode: '',
@@ -76,12 +89,12 @@ const CustomerAccounts: React.FC = () => {
   const fetchCustomers = async () => {
     setLoading(true);
     try {
-      const response = await axios.get('/api/customer-accounts', {
+      const response = await axios.get('/api/customers/with-ar', {
         params: {
           page: page + 1,
           limit: pageSize,
           search: searchText || undefined,
-          isActive: true
+          hasArOnly: false
         }
       });
       setCustomers(response.data.customers);
@@ -97,17 +110,42 @@ const CustomerAccounts: React.FC = () => {
     fetchCustomers();
   }, [page, pageSize, searchText]);
 
+  useEffect(() => {
+    if (activeTab === 1) {
+      fetchAllTransactions();
+    }
+  }, [transactionsPage, transactionsPageSize, transactionsSearchText, activeTab]);
+
+  const fetchAllTransactions = async () => {
+    setTransactionsLoading(true);
+    try {
+      const response = await axios.get('/api/customers/ar-transactions/all', {
+        params: {
+          page: transactionsPage + 1,
+          limit: transactionsPageSize,
+          search: transactionsSearchText || undefined
+        }
+      });
+      setAllTransactions(response.data.transactions);
+      setTransactionsTotalCount(response.data.pagination.total);
+    } catch (error: any) {
+      showNotification(error.response?.data?.message || 'Failed to load transactions', 'error');
+    } finally {
+      setTransactionsLoading(false);
+    }
+  };
+
   const handleCreateCustomer = async () => {
     try {
       const payload = {
-        customerCode: newCustomerForm.customerCode,
         customerName: newCustomerForm.customerName,
+        customerCode: newCustomerForm.customerCode || null,
         phone: newCustomerForm.phone || null,
         email: newCustomerForm.email || null,
         creditLimit: parseFloat(newCustomerForm.creditLimit)
       };
 
-      await axios.post('/api/customer-accounts', payload);
+      await axios.post('/api/customers', payload);
       showNotification('Customer created successfully', 'success');
       setDialogOpen(false);
       setNewCustomerForm({
@@ -126,7 +164,7 @@ const CustomerAccounts: React.FC = () => {
   const handleViewCustomer = async (customer: CustomerAccount) => {
     setSelectedCustomer(customer);
     try {
-      const response = await axios.get(`/api/customer-accounts/${customer.id}`);
+      const response = await axios.get(`/api/customers/${customer.id}/ar-transactions`);
       setCustomerTransactions(response.data.transactions || []);
     } catch (error: any) {
       showNotification('Failed to load customer details', 'error');
@@ -137,8 +175,7 @@ const CustomerAccounts: React.FC = () => {
     if (!selectedCustomer) return;
 
     try {
-      await axios.post('/api/customer-accounts/transactions', {
-        customerAccountId: selectedCustomer.id,
+      await axios.post(`/api/customers/${selectedCustomer.id}/ar-transactions`, {
         transactionType: 'payment',
         amount: parseFloat(paymentForm.amount),
         paymentMethod: 'CASH',
@@ -158,30 +195,41 @@ const CustomerAccounts: React.FC = () => {
   };
 
   const columns: GridColDef[] = [
-    { field: 'customer_code', headerName: 'Code', width: 120 },
+    { 
+      field: 'customer_code', 
+      headerName: 'Code', 
+      width: 120,
+      valueGetter: (params) => params.row.customer_code || 'N/A'
+    },
     { field: 'customer_name', headerName: 'Customer Name', width: 250, flex: 1 },
     { field: 'phone', headerName: 'Phone', width: 130 },
     {
       field: 'current_balance',
-      headerName: 'Balance',
+      headerName: 'AR Balance',
       width: 130,
       type: 'number',
-      valueFormatter: (params) => `₱${params.value?.toFixed(2)}`,
-      cellClassName: (params) => params.value > 0 ? 'text-warning' : ''
+      valueGetter: (params) => params.row.current_balance || 0,
+      valueFormatter: (params) => `₱${(params.value || 0).toFixed(2)}`,
+      cellClassName: (params) => (params.value || 0) > 0 ? 'text-warning' : ''
     },
     {
       field: 'credit_limit',
       headerName: 'Credit Limit',
       width: 130,
       type: 'number',
-      valueFormatter: (params) => `₱${params.value?.toFixed(2)}`
+      valueGetter: (params) => params.row.credit_limit || 0,
+      valueFormatter: (params) => `₱${(params.value || 0).toFixed(2)}`
     },
     {
       field: 'available_credit',
       headerName: 'Available',
       width: 130,
-      valueGetter: (params) => params.row.credit_limit - params.row.current_balance,
-      valueFormatter: (params) => `₱${params.value?.toFixed(2)}`
+      valueGetter: (params) => {
+        const limit = params.row.credit_limit || 0;
+        const balance = params.row.current_balance || 0;
+        return limit - balance;
+      },
+      valueFormatter: (params) => `₱${(params.value || 0).toFixed(2)}`
     },
     {
       field: 'actions',
@@ -213,41 +261,138 @@ const CustomerAccounts: React.FC = () => {
     }
   ];
 
+  const transactionColumns: GridColDef[] = [
+    {
+      field: 'transaction_date',
+      headerName: 'Date',
+      width: 160,
+      valueFormatter: (params) => new Date(params.value).toLocaleString()
+    },
+    { 
+      field: 'customer_name', 
+      headerName: 'Customer', 
+      width: 200,
+      flex: 1
+    },
+    {
+      field: 'transaction_type',
+      headerName: 'Type',
+      width: 100,
+      renderCell: (params: GridRenderCellParams) => (
+        <Chip
+          label={params.value.toUpperCase()}
+          size="small"
+          color={params.value === 'payment' ? 'success' : params.value === 'charge' ? 'warning' : 'default'}
+        />
+      )
+    },
+    {
+      field: 'amount',
+      headerName: 'Amount',
+      width: 120,
+      type: 'number',
+      valueFormatter: (params) => `₱${params.value.toFixed(2)}`
+    },
+    {
+      field: 'balance_after',
+      headerName: 'Balance After',
+      width: 130,
+      type: 'number',
+      valueFormatter: (params) => `₱${params.value.toFixed(2)}`
+    },
+    {
+      field: 'sale_number',
+      headerName: 'Sale #',
+      width: 120
+    },
+    {
+      field: 'processed_by_name',
+      headerName: 'Processed By',
+      width: 130
+    },
+    {
+      field: 'notes',
+      headerName: 'Notes',
+      width: 200,
+      flex: 1
+    }
+  ];
+
   return (
     <PageContainer title="Customer Accounts (AR)">
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2, gap: 2 }}>
-        <TextField
-          placeholder="Search by name, code, or phone..."
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          size="small"
-          sx={{ width: 400 }}
-        />
-        <Button
-          variant="contained"
-          startIcon={<PersonAddIcon />}
-          onClick={() => setDialogOpen(true)}
-        >
-          Add Customer
-        </Button>
-      </Box>
+      <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)} sx={{ mb: 2 }}>
+        <Tab label="Customers" />
+        <Tab label="All AR Transactions" />
+      </Tabs>
 
-      <DataGrid
-        rows={customers}
-        columns={columns}
-        paginationModel={{ page, pageSize }}
-        onPaginationModelChange={(model) => {
-          setPage(model.page);
-          setPageSize(model.pageSize);
-        }}
-        pageSizeOptions={[10, 25, 50, 100]}
-        rowCount={totalCount}
-        paginationMode="server"
-        loading={loading}
-        autoHeight
-        disableRowSelectionOnClick
-        sx={{ bgcolor: 'background.paper' }}
-      />
+      {activeTab === 0 && (
+        <>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2, gap: 2 }}>
+            <TextField
+              placeholder="Search by name, code, or phone..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              size="small"
+              sx={{ width: 400 }}
+            />
+            <Button
+              variant="contained"
+              startIcon={<PersonAddIcon />}
+              onClick={() => setDialogOpen(true)}
+            >
+              Add Customer
+            </Button>
+          </Box>
+
+          <DataGrid
+            rows={customers}
+            columns={columns}
+            paginationModel={{ page, pageSize }}
+            onPaginationModelChange={(model) => {
+              setPage(model.page);
+              setPageSize(model.pageSize);
+            }}
+            pageSizeOptions={[10, 25, 50, 100]}
+            rowCount={totalCount}
+            paginationMode="server"
+            loading={loading}
+            autoHeight
+            disableRowSelectionOnClick
+            sx={{ bgcolor: 'background.paper' }}
+          />
+        </>
+      )}
+
+      {activeTab === 1 && (
+        <>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2, gap: 2 }}>
+            <TextField
+              placeholder="Search by customer name, phone, or sale number..."
+              value={transactionsSearchText}
+              onChange={(e) => setTransactionsSearchText(e.target.value)}
+              size="small"
+              sx={{ width: 400 }}
+            />
+          </Box>
+
+          <DataGrid
+            rows={allTransactions}
+            columns={transactionColumns}
+            paginationModel={{ page: transactionsPage, pageSize: transactionsPageSize }}
+            onPaginationModelChange={(model) => {
+              setTransactionsPage(model.page);
+              setTransactionsPageSize(model.pageSize);
+            }}
+            pageSizeOptions={[10, 25, 50, 100]}
+            rowCount={transactionsTotalCount}
+            paginationMode="server"
+            loading={transactionsLoading}
+            autoHeight
+            disableRowSelectionOnClick
+            sx={{ bgcolor: 'background.paper' }}
+          />
+        </>
+      )}
 
       {/* Add Customer Dialog */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>

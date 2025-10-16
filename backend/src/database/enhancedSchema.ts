@@ -38,35 +38,14 @@ export async function createEnhancedTables(pool: Pool): Promise<void> {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    // Customer accounts for AR tracking
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS customer_accounts (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        customer_code VARCHAR(50) UNIQUE NOT NULL,
-        customer_name VARCHAR(200) NOT NULL,
-        contact_person VARCHAR(100),
-        email VARCHAR(100),
-        phone VARCHAR(20),
-        address TEXT,
-        credit_limit DECIMAL(10,2) DEFAULT 0.00,
-        current_balance DECIMAL(10,2) DEFAULT 0.00,
-        is_active TINYINT(1) DEFAULT 1,
-        notes TEXT,
-        created_by INT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (created_by) REFERENCES users (id),
-        INDEX idx_customer_code (customer_code),
-        INDEX idx_customer_name (customer_name),
-        INDEX idx_active (is_active)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
+    // NOTE: customer_accounts table removed - using unified customers table instead
+    // A/R fields are now directly in the customers table
 
-    // AR transactions linked to customer accounts
+    // AR transactions linked to customers (unified table)
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS ar_transactions (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        customer_account_id INT NOT NULL,
+        customer_id INT NOT NULL,
         sale_id INT,
         transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('charge', 'payment', 'adjustment')),
         amount DECIMAL(10,2) NOT NULL,
@@ -76,10 +55,10 @@ export async function createEnhancedTables(pool: Pool): Promise<void> {
         notes TEXT,
         processed_by INT NOT NULL,
         transaction_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (customer_account_id) REFERENCES customer_accounts (id),
+        FOREIGN KEY (customer_id) REFERENCES customers (id),
         FOREIGN KEY (sale_id) REFERENCES sales (id),
         FOREIGN KEY (processed_by) REFERENCES users (id),
-        INDEX idx_customer (customer_account_id),
+        INDEX idx_customer (customer_id),
         INDEX idx_transaction_date (transaction_date),
         INDEX idx_type (transaction_type)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -198,5 +177,9 @@ async function seedPaymentMethods(pool: Pool): Promise<void> {
     `, [method.code, method.name, method.requires_reference, method.sort_order]);
   }
 
-  logger.info('Payment methods seeded successfully');
+  // NOTE: Customer table consolidation complete
+  // customers table now includes A/R fields directly
+  // No migration needed for new installations
+
+  logger.info('Enhanced tables created successfully');
 }

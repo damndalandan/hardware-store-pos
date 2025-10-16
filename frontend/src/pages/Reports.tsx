@@ -2,9 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Button, Grid, Card, CardContent, Tab, Tabs, Paper,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  FormControl, InputLabel, Select, MenuItem, Divider, Chip, Alert
+  FormControl, InputLabel, Select, MenuItem, Divider, Chip, Alert, Snackbar,
+  CircularProgress
 } from '@mui/material';
 import ErrorBoundary from '../components/ErrorBoundary';
+import PageContainer from '../components/common/PageContainer';
+import { useNotification } from '../hooks/useNotification';
 import {
   Dashboard as DashboardIcon, TrendingUp as TrendingUpIcon, Assessment as ReportIcon,
   Inventory as InventoryIcon, Business as SuppliersIcon, MonetizationOn as ProfitIcon,
@@ -179,6 +182,7 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'
 
 const Reports: React.FC = () => {
   const { user } = useAuth();
+  const { notification, showNotification, hideNotification } = useNotification();
   const [activeTab, setActiveTab] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -223,11 +227,12 @@ const Reports: React.FC = () => {
       const errorMsg = error.response?.data?.message || error.message || 'Failed to fetch dashboard data';
       console.error('Failed to fetch dashboard data:', error);
       setError(errorMsg);
+      showNotification(errorMsg, 'error');
       setDashboardData(null);
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, API_BASE_URL]);
+  }, [startDate, endDate, API_BASE_URL, showNotification]);
 
   const fetchSalesAnalytics = useCallback(async () => {
     setLoading(true);
@@ -244,26 +249,33 @@ const Reports: React.FC = () => {
       const errorMsg = error.response?.data?.message || error.message || 'Failed to fetch sales analytics';
       console.error('Failed to fetch sales analytics:', error);
       setError(errorMsg);
+      showNotification(errorMsg, 'error');
       setSalesData(null);
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, API_BASE_URL]);
+  }, [startDate, endDate, API_BASE_URL, showNotification]);
 
   const fetchInventoryAnalytics = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const response = await axios.get(`${API_BASE_URL}/reports/inventory`);
       setInventoryData(response.data);
-    } catch (error) {
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.message || error.message || 'Failed to fetch inventory analytics';
       console.error('Failed to fetch inventory analytics:', error);
+      setError(errorMsg);
+      showNotification(errorMsg, 'error');
+      setInventoryData(null);
     } finally {
       setLoading(false);
     }
-  }, [API_BASE_URL]);
+  }, [API_BASE_URL, showNotification]);
 
   const fetchProfitabilityAnalytics = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams();
       if (startDate) params.append('start_date', startDate.toISOString().split('T')[0]);
@@ -271,15 +283,20 @@ const Reports: React.FC = () => {
       
       const response = await axios.get(`${API_BASE_URL}/reports/profitability?${params}`);
       setProfitabilityData(response.data);
-    } catch (error) {
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.message || error.message || 'Failed to fetch profitability analytics';
       console.error('Failed to fetch profitability analytics:', error);
+      setError(errorMsg);
+      showNotification(errorMsg, 'error');
+      setProfitabilityData(null);
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, API_BASE_URL]);
+  }, [startDate, endDate, API_BASE_URL, showNotification]);
 
   const fetchSupplierAnalytics = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams();
       if (startDate) params.append('start_date', startDate.toISOString().split('T')[0]);
@@ -287,12 +304,16 @@ const Reports: React.FC = () => {
       
       const response = await axios.get(`${API_BASE_URL}/reports/suppliers?${params}`);
       setSupplierData(response.data);
-    } catch (error) {
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.message || error.message || 'Failed to fetch supplier analytics';
       console.error('Failed to fetch supplier analytics:', error);
+      setError(errorMsg);
+      showNotification(errorMsg, 'error');
+      setSupplierData(null);
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, API_BASE_URL]);
+  }, [startDate, endDate, API_BASE_URL, showNotification]);
 
   useEffect(() => {
     switch (activeTab) {
@@ -320,8 +341,11 @@ const Reports: React.FC = () => {
       const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
       const filename = `${reportType}-report-${timestamp}.${format === 'excel' ? 'xlsx' : 'csv'}`;
       saveAs(blob, filename);
-    } catch (error) {
+      showNotification(`Report exported successfully as ${format.toUpperCase()}`, 'success');
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.message || error.message || 'Failed to export report';
       console.error('Failed to export report:', error);
+      showNotification(errorMsg, 'error');
     } finally {
       setLoading(false);
     }
@@ -330,18 +354,23 @@ const Reports: React.FC = () => {
   return (
     <ErrorBoundary>
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Box sx={{ p: 1, pt: 0.5 }}>
-        {/* Error Display */}
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
-            {error}
+      <PageContainer>
+        {/* Notification Snackbar */}
+        <Snackbar
+          open={notification.open}
+          autoHideDuration={6000}
+          onClose={hideNotification}
+          anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          <Alert onClose={hideNotification} severity={notification.severity} sx={{ width: '100%' }}>
+            {notification.message}
           </Alert>
-        )}
+        </Snackbar>
 
-        {/* Date Range Controls (show only for Dashboard and Sales tabs) */}
-        {(activeTab === 0 || activeTab === 1) && (
-        <Card sx={{ mb: 3 }}>
-          <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {/* Date Range Controls (show for Dashboard, Sales, Profitability, and Supplier tabs) */}
+        {(activeTab === 0 || activeTab === 1 || activeTab === 3 || activeTab === 4) && (
+        <Card sx={{ mb: 2, boxShadow: 'none', bgcolor: '#fff' }}>
+          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
             <Grid container spacing={2} alignItems="center">
               <Grid item xs={12} md={2}>
                 <DatePicker
@@ -411,8 +440,8 @@ const Reports: React.FC = () => {
         )}
 
         {/* Tabs */}
-        <Box sx={{ mb: 3 }}>
-          <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)}>
+        <Box sx={{ mb: 2 }}>
+          <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)} sx={{ borderBottom: 1, borderColor: 'divider' }}>
             <Tab label="Dashboard Overview" icon={<DashboardIcon />} />
             <Tab label="Sales Analytics" icon={<TrendingUpIcon />} />
             <Tab label="Inventory Reports" icon={<InventoryIcon />} />
@@ -520,18 +549,18 @@ const Reports: React.FC = () => {
                     Top Selling Products
                   </Typography>
                   {dashboardData.topProducts && dashboardData.topProducts.length > 0 ? (
-                  <TableContainer>
-                    <Table size="small">
+                  <TableContainer sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 320, overflow: 'auto' }}>
+                    <Table size="small" stickyHeader sx={{ '& .MuiTableRow-root': { height: 40 }, '& .MuiTableCell-root': { py: 0.5 } }}>
                       <TableHead>
-                        <TableRow>
-                          <TableCell>Product</TableCell>
-                          <TableCell align="right">Sold</TableCell>
-                          <TableCell align="right">Revenue</TableCell>
+                        <TableRow sx={{ height: 40 }}>
+                          <TableCell sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Product</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Sold</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Revenue</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {dashboardData.topProducts.slice(0, 8).map((product, index) => (
-                          <TableRow key={index}>
+                          <TableRow key={index} hover sx={{ height: 40 }}>
                             <TableCell>
                               <Typography variant="body2" fontWeight="bold">
                                 {product.name}
@@ -718,20 +747,20 @@ const Reports: React.FC = () => {
                   <Typography variant="h6" gutterBottom>
                     Category Performance
                   </Typography>
-                  <TableContainer>
-                    <Table>
+                  <TableContainer sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 400, overflow: 'auto' }}>
+                    <Table stickyHeader sx={{ '& .MuiTableRow-root': { height: 40 }, '& .MuiTableCell-root': { py: 0.5 } }}>
                       <TableHead>
-                        <TableRow>
-                          <TableCell>Category</TableCell>
-                          <TableCell align="right">Products</TableCell>
-                          <TableCell align="right">Quantity Sold</TableCell>
-                          <TableCell align="right">Revenue</TableCell>
-                          <TableCell align="right">Avg Price</TableCell>
+                        <TableRow sx={{ height: 40 }}>
+                          <TableCell sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Category</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Products</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Quantity Sold</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Revenue</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Avg Price</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {salesData.categoryPerformance.map((category, index) => (
-                          <TableRow key={index}>
+                          <TableRow key={index} hover sx={{ height: 40 }}>
                             <TableCell>
                               <Typography fontWeight="bold">{category.category_name}</Typography>
                             </TableCell>
@@ -760,21 +789,21 @@ const Reports: React.FC = () => {
                   <Typography variant="h6" gutterBottom>
                     Inventory Status by Category
                   </Typography>
-                  <TableContainer>
-                    <Table>
+                  <TableContainer sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 400, overflow: 'auto' }}>
+                    <Table stickyHeader sx={{ '& .MuiTableRow-root': { height: 40 }, '& .MuiTableCell-root': { py: 0.5 } }}>
                       <TableHead>
-                        <TableRow>
-                          <TableCell>Category</TableCell>
-                          <TableCell align="right">Products</TableCell>
-                          <TableCell align="right">Total Stock</TableCell>
-                          <TableCell align="right">Value</TableCell>
-                          <TableCell align="right">Low Stock</TableCell>
-                          <TableCell align="right">Out of Stock</TableCell>
+                        <TableRow sx={{ height: 40 }}>
+                          <TableCell sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Category</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Products</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Total Stock</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Value</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Low Stock</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Out of Stock</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {inventoryData.inventoryStatus.map((category, index) => (
-                          <TableRow key={index}>
+                          <TableRow key={index} hover sx={{ height: 40 }}>
                             <TableCell>
                               <Typography fontWeight="bold">{category.category_name}</Typography>
                             </TableCell>
@@ -811,21 +840,21 @@ const Reports: React.FC = () => {
                   <Typography variant="h6" gutterBottom>
                     Inventory Turnover Analysis (Top 20)
                   </Typography>
-                  <TableContainer>
-                    <Table>
+                  <TableContainer sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 500, overflow: 'auto' }}>
+                    <Table stickyHeader sx={{ '& .MuiTableRow-root': { height: 40 }, '& .MuiTableCell-root': { py: 0.5 } }}>
                       <TableHead>
-                        <TableRow>
-                          <TableCell>Product</TableCell>
-                          <TableCell>Category</TableCell>
-                          <TableCell align="right">Current Stock</TableCell>
-                          <TableCell align="right">Sold (30d)</TableCell>
-                          <TableCell align="right">Days of Stock</TableCell>
-                          <TableCell align="right">Value</TableCell>
+                        <TableRow sx={{ height: 40 }}>
+                          <TableCell sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Product</TableCell>
+                          <TableCell sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Category</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Current Stock</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Sold (30d)</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Days of Stock</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Value</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {inventoryData.turnoverAnalysis.slice(0, 20).map((product, index) => (
-                          <TableRow key={index}>
+                          <TableRow key={index} hover sx={{ height: 40 }}>
                             <TableCell>
                               <Typography variant="body2" fontWeight="bold">
                                 {product.name}
@@ -890,20 +919,20 @@ const Reports: React.FC = () => {
                   <Typography variant="h6" gutterBottom>
                     Category Profitability
                   </Typography>
-                  <TableContainer>
-                    <Table>
+                  <TableContainer sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 400, overflow: 'auto' }}>
+                    <Table stickyHeader sx={{ '& .MuiTableRow-root': { height: 40 }, '& .MuiTableCell-root': { py: 0.5 } }}>
                       <TableHead>
-                        <TableRow>
-                          <TableCell>Category</TableCell>
-                          <TableCell align="right">Revenue</TableCell>
-                          <TableCell align="right">Cost</TableCell>
-                          <TableCell align="right">Profit</TableCell>
-                          <TableCell align="right">Margin %</TableCell>
+                        <TableRow sx={{ height: 40 }}>
+                          <TableCell sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Category</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Revenue</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Cost</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Profit</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Margin %</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {profitabilityData.categoryProfitability.map((category, index) => (
-                          <TableRow key={index}>
+                          <TableRow key={index} hover sx={{ height: 40 }}>
                             <TableCell>
                               <Typography fontWeight="bold">{category.category_name}</Typography>
                             </TableCell>
@@ -934,17 +963,17 @@ const Reports: React.FC = () => {
                   <Typography variant="h6" gutterBottom>
                     Top Profitable Products
                   </Typography>
-                  <TableContainer>
-                    <Table size="small">
+                  <TableContainer sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 400, overflow: 'auto' }}>
+                    <Table size="small" stickyHeader sx={{ '& .MuiTableRow-root': { height: 40 }, '& .MuiTableCell-root': { py: 0.5 } }}>
                       <TableHead>
-                        <TableRow>
-                          <TableCell>Product</TableCell>
-                          <TableCell align="right">Profit</TableCell>
+                        <TableRow sx={{ height: 40 }}>
+                          <TableCell sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Product</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Profit</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {profitabilityData.productProfitability.slice(0, 10).map((product, index) => (
-                          <TableRow key={index}>
+                          <TableRow key={index} hover sx={{ height: 40 }}>
                             <TableCell>
                               <Typography variant="body2" fontWeight="bold">
                                 {product.name}
@@ -995,22 +1024,22 @@ const Reports: React.FC = () => {
                   <Typography variant="h6" gutterBottom>
                     Supplier Performance
                   </Typography>
-                  <TableContainer>
-                    <Table>
+                  <TableContainer sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 500, overflow: 'auto' }}>
+                    <Table stickyHeader sx={{ '& .MuiTableRow-root': { height: 40 }, '& .MuiTableCell-root': { py: 0.5 } }}>
                       <TableHead>
-                        <TableRow>
-                          <TableCell>Supplier</TableCell>
-                          <TableCell align="right">Orders</TableCell>
-                          <TableCell align="right">Total Spent</TableCell>
-                          <TableCell align="right">Avg Order</TableCell>
-                          <TableCell align="right">Completion Rate</TableCell>
-                          <TableCell align="right">Avg Delivery</TableCell>
-                          <TableCell align="right">Last Order</TableCell>
+                        <TableRow sx={{ height: 40 }}>
+                          <TableCell sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Supplier</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Orders</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Total Spent</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Avg Order</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Completion Rate</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Avg Delivery</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Last Order</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {supplierData.supplierPerformance.map((supplier, index) => (
-                          <TableRow key={index}>
+                          <TableRow key={index} hover sx={{ height: 40 }}>
                             <TableCell>
                               <Typography variant="body2" fontWeight="bold">
                                 {supplier.supplier_name}
@@ -1046,23 +1075,30 @@ const Reports: React.FC = () => {
         )}
 
         {/* Loading State */}
-        {loading && activeTab === 0 && (
+        {loading && (
           <Box sx={{ textAlign: 'center', py: 8 }}>
-            <Typography variant="h6" color="text.secondary">
-              Loading dashboard data...
+            <CircularProgress size={40} />
+            <Typography variant="h6" color="text.secondary" sx={{ mt: 2 }}>
+              Loading {activeTab === 0 ? 'dashboard' : activeTab === 1 ? 'sales' : activeTab === 2 ? 'inventory' : activeTab === 3 ? 'profitability' : 'supplier'} data...
             </Typography>
           </Box>
         )}
 
         {/* No Data State */}
-        {!loading && !error && activeTab === 0 && !dashboardData && (
+        {!loading && !error && (
+          (activeTab === 0 && !dashboardData) ||
+          (activeTab === 1 && !salesData) ||
+          (activeTab === 2 && !inventoryData) ||
+          (activeTab === 3 && !profitabilityData) ||
+          (activeTab === 4 && !supplierData)
+        ) && (
           <Box sx={{ textAlign: 'center', py: 8 }}>
             <Typography variant="h6" color="text.secondary">
               No data available for the selected date range.
             </Typography>
           </Box>
         )}
-      </Box>
+      </PageContainer>
     </LocalizationProvider>
     </ErrorBoundary>
   );

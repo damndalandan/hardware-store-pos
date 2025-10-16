@@ -91,17 +91,16 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
   };
 
   const summary = getShiftSummary();
-  const expectedCash = currentShift ? 
-    currentShift.startingCash + currentShift.totalCash : 0;
+  const expectedCash = currentShift ? Number(currentShift.startingCash || 0) + Number(currentShift.totalCash || 0) : 0;
   const actualCash = parseFloat(endingCash) || 0;
   const cashDifference = actualCash - expectedCash;
 
   // Payment method breakdown
   const paymentBreakdown = currentShift ? [
-    { method: 'Cash', amount: currentShift.totalCash, icon: <LocalAtm />, color: 'success' },
-    { method: 'Card', amount: currentShift.totalCard, icon: <CreditCard />, color: 'primary' },
-    { method: 'Mobile', amount: currentShift.totalMobile, icon: <Smartphone />, color: 'info' },
-    { method: 'Check', amount: currentShift.totalCheck, icon: <AccountBalance />, color: 'secondary' },
+    { method: 'Cash', amount: Number(currentShift.totalCash || 0), icon: <LocalAtm />, color: 'success' },
+    { method: 'Card', amount: Number(currentShift.totalCard || 0), icon: <CreditCard />, color: 'primary' },
+    { method: 'Mobile', amount: Number(currentShift.totalMobile || 0), icon: <Smartphone />, color: 'info' },
+    { method: 'Check', amount: Number(currentShift.totalCheck || 0), icon: <AccountBalance />, color: 'secondary' },
   ] : [];
 
   const printShiftSummary = () => {
@@ -109,6 +108,18 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
     
     const printWindow = window.open('', '_blank');
     if (printWindow) {
+      // Filter used payment methods
+      const usedPayments = [
+        { label: 'Cash', amount: Number(endedShiftData?.totalCash || 0) },
+        { label: 'Card', amount: Number(endedShiftData?.totalCard || 0) },
+        { label: 'Mobile', amount: Number(endedShiftData?.totalMobile || 0) },
+        { label: 'Check', amount: Number(endedShiftData?.totalCheck || 0) }
+      ].filter(p => p.amount > 0);
+
+      const expenseRows = (endedShiftData.expenses || []).map((exp: any) => 
+        `<div class="row"><span>${exp.category}:</span><span>$${Number(exp.total_amount || 0).toFixed(2)} (${exp.count})</span></div>`
+      ).join('');
+
       printWindow.document.write(`
         <html>
           <head>
@@ -127,30 +138,35 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
               <h2>HARDWARE STORE</h2>
               <h3>SHIFT SUMMARY</h3>
               <p>Cashier: ${endedShiftData.cashierName}</p>
-              <p>${new Date(endedShiftData.startTime).toLocaleString()} - ${new Date(endedShiftData.endTime).toLocaleString()}</p>
+              <p>${endedShiftData && endedShiftData.startTime ? new Date(endedShiftData.startTime).toLocaleString() : ''} - ${endedShiftData && endedShiftData.endTime ? new Date(endedShiftData.endTime).toLocaleString() : ''}</p>
             </div>
             
             <div class="section">
               <h3>SALES SUMMARY</h3>
               <div class="row"><span>Total Transactions:</span><span>${endedShiftData.totalTransactions}</span></div>
-              <div class="row"><span>Total Sales:</span><span>$${Number(endedShiftData.totalSales).toFixed(2)}</span></div>
+              <div class="row"><span>Total Sales:</span><span>$${Number(endedShiftData?.totalSales || 0).toFixed(2)}</span></div>
             </div>
             
             <div class="section">
               <h3>PAYMENT BREAKDOWN</h3>
-              <div class="row"><span>Cash:</span><span>$${Number(endedShiftData.totalCash).toFixed(2)}</span></div>
-              <div class="row"><span>Card:</span><span>$${Number(endedShiftData.totalCard).toFixed(2)}</span></div>
-              <div class="row"><span>Mobile:</span><span>$${Number(endedShiftData.totalMobile).toFixed(2)}</span></div>
-              <div class="row"><span>Check:</span><span>$${Number(endedShiftData.totalCheck).toFixed(2)}</span></div>
+              ${usedPayments.map(p => `<div class="row"><span>${p.label}:</span><span>$${p.amount.toFixed(2)}</span></div>`).join('')}
             </div>
+            
+            ${(endedShiftData.expenses && endedShiftData.expenses.length > 0) || (endedShiftData.totalExpenses && endedShiftData.totalExpenses > 0) ? `
+            <div class="section">
+              <h3>EXPENSES & DEDUCTIONS</h3>
+              ${expenseRows}
+              <div class="total"><span>Total Expenses:</span><span>$${Number(endedShiftData?.totalExpenses || 0).toFixed(2)}</span></div>
+            </div>
+            ` : ''}
             
             <div class="section">
               <h3>CASH RECONCILIATION</h3>
-              <div class="row"><span>Starting Cash:</span><span>$${Number(endedShiftData.startingCash).toFixed(2)}</span></div>
-              <div class="row"><span>Cash Sales:</span><span>$${Number(endedShiftData.totalCash).toFixed(2)}</span></div>
-              <div class="row"><span>Expected Cash:</span><span>$${(Number(endedShiftData.startingCash) + Number(endedShiftData.totalCash)).toFixed(2)}</span></div>
-              <div class="row"><span>Actual Cash:</span><span>$${Number(endedShiftData.endingCash).toFixed(2)}</span></div>
-              <div class="total"><span>Cash Difference:</span><span>$${Number(endedShiftData.cashDifference || 0).toFixed(2)}</span></div>
+              <div class="row"><span>Starting Cash:</span><span>$${Number(endedShiftData?.startingCash || 0).toFixed(2)}</span></div>
+              <div class="row"><span>Cash Sales:</span><span>$${Number(endedShiftData?.totalCash || 0).toFixed(2)}</span></div>
+              <div class="row"><span>Expected Cash:</span><span>$${(Number(endedShiftData?.startingCash || 0) + Number(endedShiftData?.totalCash || 0)).toFixed(2)}</span></div>
+              <div class="row"><span>Actual Cash:</span><span>$${Number(endedShiftData?.endingCash || 0).toFixed(2)}</span></div>
+              <div class="total"><span>Cash Difference:</span><span>$${Number(endedShiftData?.cashDifference || 0).toFixed(2)}</span></div>
             </div>
             
             <div style="text-align: center; margin-top: 30px;">
@@ -259,7 +275,7 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                 <Grid item xs={6}>
                   <Box sx={{ textAlign: 'center' }}>
                     <Typography variant="h4" color="success.main" fontWeight="bold">
-                      ${Number(endedShiftData.totalSales).toFixed(2)}
+                      ${Number(endedShiftData?.totalSales || 0).toFixed(2)}
                     </Typography>
                     <Typography variant="body2" color="textSecondary">
                       Total Sales
@@ -279,9 +295,9 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                   }
                   fontWeight="bold"
                 >
-                  ${(endedShiftData.cashDifference || 0).toFixed(2)}
-                  {(endedShiftData.cashDifference || 0) > 0 ? ' (Over)' : 
-                   (endedShiftData.cashDifference || 0) < 0 ? ' (Short)' : ' (Perfect)'}
+                  ${Number(endedShiftData?.cashDifference || 0).toFixed(2)}
+                  {(Number(endedShiftData?.cashDifference || 0) > 0) ? ' (Over)' : 
+                   (Number(endedShiftData?.cashDifference || 0) < 0) ? ' (Short)' : ' (Perfect)'}
                 </Typography>
               </Box>
             </Paper>
@@ -327,12 +343,6 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                       </ListItem>
                       <ListItem>
                         <ListItemText 
-                          primary="Duration" 
-                          secondary={`${Math.round((Date.now() - new Date(currentShift?.startTime || '').getTime()) / (1000 * 60 * 60))} hours`}
-                        />
-                      </ListItem>
-                      <ListItem>
-                        <ListItemText 
                           primary="Total Transactions" 
                           secondary={
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -348,7 +358,7 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                           secondary={
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                               <Typography variant="body2" color="success.main" fontWeight="bold">
-                                ${summary.totalSales.toFixed(2)}
+                                ${Number(summary.totalSales || 0).toFixed(2)}
                               </Typography>
                             </Box>
                           }
@@ -359,13 +369,15 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                 </Card>
 
                 {/* Payment Breakdown */}
-                <Card variant="outlined">
+                <Card variant="outlined" sx={{ mb: 2 }}>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>
                       Payment Breakdown
                     </Typography>
                     
-                    {paymentBreakdown.map((payment) => (
+                    {paymentBreakdown
+                      .filter(payment => payment.amount > 0)
+                      .map((payment) => (
                       <Box 
                         key={payment.method}
                         sx={{ 
@@ -375,7 +387,7 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                           mb: 1,
                           p: 1,
                           borderRadius: 1,
-                          bgcolor: payment.amount > 0 ? `${payment.color}.50` : 'transparent'
+                          bgcolor: `${payment.color}.50`
                         }}
                       >
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -383,10 +395,42 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                           <Typography>{payment.method}</Typography>
                         </Box>
                         <Typography fontWeight="bold">
-                          ${payment.amount.toFixed(2)}
+                          ${Number(payment.amount || 0).toFixed(2)}
                         </Typography>
                       </Box>
                     ))}
+                    
+                    {paymentBreakdown.filter(p => p.amount > 0).length === 0 && (
+                      <Typography variant="body2" color="textSecondary" sx={{ textAlign: 'center', py: 2 }}>
+                        No payments recorded
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Expenses Summary */}
+                <Card variant="outlined">
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Expenses & Deductions
+                    </Typography>
+                    
+                    {endedShiftData?.expenses && endedShiftData.expenses.length > 0 ? (
+                      <>
+                        {endedShiftData.expenses.map((expense: any) => (
+                          <Box key={expense.category} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, p: 1 }}>
+                            <Typography>{expense.category} ({expense.count}x):</Typography>
+                            <Typography fontWeight="bold" color="error.main">
+                              ${Number(expense.total_amount || 0).toFixed(2)}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </>
+                    ) : (
+                      <Typography variant="body2" color="textSecondary" sx={{ textAlign: 'center', py: 2 }}>
+                        No expenses recorded
+                      </Typography>
+                    )}
                   </CardContent>
                 </Card>
               </Grid>
@@ -402,17 +446,17 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                     <Box sx={{ mb: 2 }}>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                         <Typography>Starting Cash:</Typography>
-                        <Typography>${summary.shift.startingCash.toFixed(2)}</Typography>
+                        <Typography>${Number(summary.shift.startingCash || 0).toFixed(2)}</Typography>
                       </Box>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                         <Typography>Cash Sales:</Typography>
-                        <Typography>${summary.paymentBreakdown.cash.toFixed(2)}</Typography>
+                        <Typography>${Number(summary.paymentBreakdown.cash || 0).toFixed(2)}</Typography>
                       </Box>
                       <Divider sx={{ my: 1 }} />
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                         <Typography fontWeight="bold">Expected Cash:</Typography>
                         <Typography fontWeight="bold">
-                          ${summary.expectedCash.toFixed(2)}
+                          ${Number(summary.expectedCash || 0).toFixed(2)}
                         </Typography>
                       </Box>
                     </Box>
@@ -436,11 +480,11 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                         <Divider sx={{ my: 2 }} />
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                           <Typography>Expected Cash:</Typography>
-                          <Typography>${expectedCash.toFixed(2)}</Typography>
+                          <Typography>${Number(expectedCash || 0).toFixed(2)}</Typography>
                         </Box>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                           <Typography>Actual Cash:</Typography>
-                          <Typography>${actualCash.toFixed(2)}</Typography>
+                          <Typography>${Number(actualCash || 0).toFixed(2)}</Typography>
                         </Box>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                           <Typography fontWeight="bold">Difference:</Typography>
@@ -451,7 +495,7 @@ const ShiftDialog: React.FC<ShiftDialogProps> = ({ open, onClose, type }) => {
                               Math.abs(cashDifference) <= 5 ? 'warning.main' : 'error.main'
                             }
                           >
-                            ${cashDifference.toFixed(2)}
+                            ${Number(cashDifference || 0).toFixed(2)}
                             {cashDifference > 0 ? ' (Over)' : 
                              cashDifference < 0 ? ' (Short)' : ' (Perfect)'}
                           </Typography>
