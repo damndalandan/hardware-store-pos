@@ -228,7 +228,7 @@ router.post('/', requireRole(['admin', 'manager']), asyncHandler(async (req: Aut
         po_number, supplier_id, status, order_date, expected_date, 
         total_amount, notes, created_by
       ) VALUES (?, ?, 'draft', CURDATE(), ?, ?, ?, ?)
-    `, [poNumber, supplier_id, expected_date || null, notes || null, req.user?.id]) as any;
+    `, [poNumber, supplier_id, expected_date || null, totalAmount, notes || null, req.user?.id]) as any;
 
     const purchaseOrderId = poResult.insertId;
 

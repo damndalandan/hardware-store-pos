@@ -71,7 +71,7 @@ interface SupplierDetail extends Supplier {
 
 interface PurchaseOrder {
   id: number;
-  order_number: string;
+  po_number: string;
   supplier_id: number;
   supplier_name: string;
   order_date: string;
@@ -111,6 +111,41 @@ const Suppliers: React.FC = () => {
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [lowStockDialog, setLowStockDialog] = useState(false);
   const [lowStockProducts, setLowStockProducts] = useState<any[]>([]);
+  const [productSearchTerm, setProductSearchTerm] = useState('');
+  
+  // Receiving dialog states
+  const [receiveDialog, setReceiveDialog] = useState(false);
+  const [receivingItems, setReceivingItems] = useState<Array<{
+    id: number;
+    product_id: number;
+    product_name: string;
+    ordered_quantity: number;
+    received_quantity: number;
+    receiving_now: number;
+    unit_price: number;
+    actual_price: number;
+  }>>([]);
+  const [paymentAmount, setPaymentAmount] = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'check' | 'bank_transfer'>('cash');
+  const [paymentNotes, setPaymentNotes] = useState('');
+  
+  // Receive Items tab states
+  const [selectedReceivePO, setSelectedReceivePO] = useState<number | null>(null);
+  const [receivePOItems, setReceivePOItems] = useState<Array<{
+    id: number;
+    product_id: number;
+    product_name: string;
+    ordered_quantity: number;
+    received_quantity: number;
+    unit_price: number;
+    actual_price: number;
+    to_receive: number;
+    checked: boolean;
+  }>>([]);
+  
+  // Make Payment tab states
+  const [selectedPaymentPO, setSelectedPaymentPO] = useState<number | null>(null);
+  const [paymentPODetails, setPaymentPODetails] = useState<any>(null);
   
   // PO Form states
   const [poOrderNumber, setPoOrderNumber] = useState('');
@@ -394,6 +429,138 @@ const Suppliers: React.FC = () => {
         axios.isAxiosError(error) 
           ? error.response?.data?.message || 'Failed to create purchase order'
           : 'Failed to create purchase order',
+        'error'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Open receive dialog and fetch PO items
+  const handleOpenReceiveDialog = async (po: PurchaseOrder) => {
+    try {
+      setLoading(true);
+      // Fetch full PO details including items
+      const response = await axios.get(`/api/purchase-orders/${po.id}`);
+      const poData = response.data;
+      
+      // Set up receiving items
+      const items = poData.items.map((item: any) => ({
+        id: item.id,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        ordered_quantity: item.quantity,
+        received_quantity: item.received_quantity || 0,
+        receiving_now: Math.max(0, item.quantity - (item.received_quantity || 0))
+      }));
+      
+      setReceivingItems(items);
+      setPaymentAmount(poData.total_amount - (poData.paid_amount || 0));
+      setPaymentMethod('cash');
+      setPaymentNotes('');
+      setSelectedPO(po);
+      setReceiveDialog(true);
+      
+    } catch (error) {
+      console.error('Failed to fetch PO details:', error);
+      showNotification('Failed to load purchase order details', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle receiving items
+  const handleReceiveItems = async () => {
+    if (!selectedPO) return;
+
+    const itemsToReceive = receivingItems.filter(item => item.receiving_now > 0);
+    
+    if (itemsToReceive.length === 0 && paymentAmount <= 0) {
+      showNotification('Please enter items to receive or payment amount', 'warning');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const receiveData: any = {
+        purchase_order_id: selectedPO.id,
+        items: itemsToReceive.map(item => ({
+          purchase_order_item_id: item.id,
+          product_id: item.product_id,
+          quantity_received: item.receiving_now
+        }))
+      };
+
+      // Add payment if amount > 0
+      if (paymentAmount > 0) {
+        receiveData.payment = {
+          amount: paymentAmount,
+          payment_method: paymentMethod,
+          notes: paymentNotes
+        };
+      }
+
+      await axios.post(`/api/purchase-orders/${selectedPO.id}/receive`, receiveData);
+
+      showNotification('Items received successfully', 'success');
+      
+      // Reset and refresh
+      setReceiveDialog(false);
+      setReceivingItems([]);
+      setPaymentAmount(0);
+      setPaymentNotes('');
+      
+      if (selectedSupplier) {
+        fetchPurchaseOrders(selectedSupplier.id);
+      }
+
+    } catch (error) {
+      console.error('Failed to receive items:', error);
+      showNotification(
+        axios.isAxiosError(error)
+          ? error.response?.data?.message || 'Failed to receive items'
+          : 'Failed to receive items',
+        'error'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle payment only (no receiving)
+  const handleRecordPayment = async () => {
+    if (!selectedPO || paymentAmount <= 0) {
+      showNotification('Please enter a payment amount', 'warning');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      await axios.post(`/api/purchase-orders/${selectedPO.id}/payment`, {
+        amount: paymentAmount,
+        payment_method: paymentMethod,
+        notes: paymentNotes
+      });
+
+      showNotification('Payment recorded successfully', 'success');
+      
+      // Reset and refresh
+      setPoDetailDialog(false);
+      setPaymentAmount(0);
+      setPaymentNotes('');
+      
+      if (selectedSupplier) {
+        fetchPurchaseOrders(selectedSupplier.id);
+      }
+
+    } catch (error) {
+      console.error('Failed to record payment:', error);
+      showNotification(
+        axios.isAxiosError(error)
+          ? error.response?.data?.message || 'Failed to record payment'
+          : 'Failed to record payment',
         'error'
       );
     } finally {
@@ -1023,6 +1190,8 @@ const Suppliers: React.FC = () => {
                       {/* Tabs */}
                       <Tabs value={rightTab} onChange={(e, v) => setRightTab(v)}>
                         <Tab label="Purchase Orders" />
+                        <Tab label="Receive Items" icon={<InventoryIcon fontSize="small" />} iconPosition="start" />
+                        <Tab label="Make Payment" icon={<PaymentIcon fontSize="small" />} iconPosition="start" />
                         <Tab label="Inventory History" />
                       </Tabs>
                     </CardContent>
@@ -1100,7 +1269,7 @@ const Suppliers: React.FC = () => {
                                             setPoDetailDialog(true);
                                           }}
                                         >
-                                          {po.order_number}
+                                          {po.po_number}
                                         </Typography>
                                       </TableCell>
                                       <TableCell>{formatDate(po.order_date)}</TableCell>
@@ -1143,7 +1312,426 @@ const Suppliers: React.FC = () => {
                       </>
                     )}
 
+                    {/* Receive Items Tab */}
                     {rightTab === 1 && (
+                      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+                        <Typography variant="h6" gutterBottom>
+                          Receive Items from Purchase Orders
+                        </Typography>
+                        
+                        {/* PO Selection */}
+                        <FormControl fullWidth sx={{ mb: 3, maxWidth: 400 }}>
+                          <InputLabel>Select Purchase Order</InputLabel>
+                          <Select
+                            value={selectedReceivePO || ''}
+                            label="Select Purchase Order"
+                            onChange={async (e) => {
+                              const poId = Number(e.target.value);
+                              setSelectedReceivePO(poId);
+                              
+                              // Fetch PO items
+                              try {
+                                setLoading(true);
+                                const response = await axios.get(`/api/purchase-orders/${poId}`);
+                                const poData = response.data;
+                                
+                                const items = poData.items.map((item: any) => ({
+                                  id: item.id,
+                                  product_id: item.product_id,
+                                  product_name: item.product_name,
+                                  ordered_quantity: item.quantity,
+                                  received_quantity: item.received_quantity || 0,
+                                  unit_price: item.unit_cost,
+                                  actual_price: item.unit_cost,
+                                  to_receive: Math.max(0, item.quantity - (item.received_quantity || 0)),
+                                  checked: false
+                                }));
+                                
+                                setReceivePOItems(items);
+                              } catch (error) {
+                                console.error('Failed to fetch PO items:', error);
+                                showNotification('Failed to load purchase order items', 'error');
+                              } finally {
+                                setLoading(false);
+                              }
+                            }}
+                          >
+                            {purchaseOrders
+                              .filter(po => po.receiving_status !== 'Received')
+                              .map(po => (
+                                <MenuItem key={po.id} value={po.id}>
+                                  {po.po_number} - {formatDate(po.order_date)} ({formatCurrency(po.total_amount)})
+                                </MenuItem>
+                              ))}
+                          </Select>
+                        </FormControl>
+
+                        {/* Items Table */}
+                        {selectedReceivePO && receivePOItems.length > 0 && (
+                          <>
+                            <TableContainer component={Paper} variant="outlined">
+                              <Table size="small">
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell padding="checkbox">
+                                      <Checkbox
+                                        checked={receivePOItems.every(item => item.checked)}
+                                        indeterminate={receivePOItems.some(item => item.checked) && !receivePOItems.every(item => item.checked)}
+                                        onChange={(e) => {
+                                          setReceivePOItems(receivePOItems.map(item => ({
+                                            ...item,
+                                            checked: e.target.checked
+                                          })));
+                                        }}
+                                      />
+                                    </TableCell>
+                                    <TableCell>Product</TableCell>
+                                    <TableCell align="center">Ordered</TableCell>
+                                    <TableCell align="center">Received</TableCell>
+                                    <TableCell align="center">Remaining</TableCell>
+                                    <TableCell align="center">Receive Qty</TableCell>
+                                    <TableCell align="right">PO Price</TableCell>
+                                    <TableCell align="right">Actual Price</TableCell>
+                                    <TableCell align="right">Subtotal</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {receivePOItems.map((item, index) => (
+                                    <TableRow key={item.id}>
+                                      <TableCell padding="checkbox">
+                                        <Checkbox
+                                          checked={item.checked}
+                                          onChange={(e) => {
+                                            const newItems = [...receivePOItems];
+                                            newItems[index].checked = e.target.checked;
+                                            setReceivePOItems(newItems);
+                                          }}
+                                        />
+                                      </TableCell>
+                                      <TableCell>{item.product_name}</TableCell>
+                                      <TableCell align="center">{item.ordered_quantity}</TableCell>
+                                      <TableCell align="center">{item.received_quantity}</TableCell>
+                                      <TableCell align="center">
+                                        {item.ordered_quantity - item.received_quantity}
+                                      </TableCell>
+                                      <TableCell align="center">
+                                        <TextField
+                                          type="number"
+                                          size="small"
+                                          value={item.to_receive}
+                                          disabled={!item.checked}
+                                          onChange={(e) => {
+                                            const value = Math.max(0, Math.min(
+                                              Number(e.target.value),
+                                              item.ordered_quantity - item.received_quantity
+                                            ));
+                                            const newItems = [...receivePOItems];
+                                            newItems[index].to_receive = value;
+                                            setReceivePOItems(newItems);
+                                          }}
+                                          inputProps={{
+                                            min: 0,
+                                            max: item.ordered_quantity - item.received_quantity,
+                                            style: { textAlign: 'center', width: 60 }
+                                          }}
+                                        />
+                                      </TableCell>
+                                      <TableCell align="right">{formatCurrency(item.unit_price)}</TableCell>
+                                      <TableCell align="right">
+                                        <TextField
+                                          type="number"
+                                          size="small"
+                                          value={item.actual_price}
+                                          disabled={!item.checked}
+                                          onChange={(e) => {
+                                            const newItems = [...receivePOItems];
+                                            newItems[index].actual_price = Number(e.target.value);
+                                            setReceivePOItems(newItems);
+                                          }}
+                                          inputProps={{
+                                            min: 0,
+                                            step: 0.01,
+                                            style: { textAlign: 'right', width: 80 }
+                                          }}
+                                          InputProps={{
+                                            startAdornment: <Typography sx={{ fontSize: 12, mr: 0.5 }}>₱</Typography>
+                                          }}
+                                        />
+                                      </TableCell>
+                                      <TableCell align="right">
+                                        {formatCurrency(item.to_receive * item.actual_price)}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </TableContainer>
+
+                            {/* Summary */}
+                            <Box sx={{ mt: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                              <Grid container spacing={2}>
+                                <Grid item xs={6}>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Items Selected: {receivePOItems.filter(item => item.checked).length}
+                                  </Typography>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Total Quantity: {receivePOItems.filter(item => item.checked).reduce((sum, item) => sum + item.to_receive, 0)}
+                                  </Typography>
+                                </Grid>
+                                <Grid item xs={6} sx={{ textAlign: 'right' }}>
+                                  <Typography variant="h6" color="primary">
+                                    Amount to Pay: {formatCurrency(
+                                      receivePOItems
+                                        .filter(item => item.checked)
+                                        .reduce((sum, item) => sum + (item.to_receive * item.actual_price), 0)
+                                    )}
+                                  </Typography>
+                                </Grid>
+                              </Grid>
+                            </Box>
+
+                            {/* Action Buttons */}
+                            <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                              <Button
+                                variant="outlined"
+                                onClick={() => {
+                                  setSelectedReceivePO(null);
+                                  setReceivePOItems([]);
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                variant="contained"
+                                startIcon={<CheckCircleIcon />}
+                                disabled={loading || !receivePOItems.some(item => item.checked && item.to_receive > 0)}
+                                onClick={async () => {
+                                  const itemsToReceive = receivePOItems.filter(item => item.checked && item.to_receive > 0);
+                                  
+                                  try {
+                                    setLoading(true);
+                                    await axios.post(`/api/purchase-orders/${selectedReceivePO}/receive`, {
+                                      items: itemsToReceive.map(item => ({
+                                        purchase_order_item_id: item.id,
+                                        product_id: item.product_id,
+                                        quantity_received: item.to_receive,
+                                        actual_price: item.actual_price
+                                      }))
+                                    });
+
+                                    showNotification('Items received successfully', 'success');
+                                    setSelectedReceivePO(null);
+                                    setReceivePOItems([]);
+                                    
+                                    if (selectedSupplier) {
+                                      fetchPurchaseOrders(selectedSupplier.id);
+                                    }
+                                  } catch (error) {
+                                    console.error('Failed to receive items:', error);
+                                    showNotification('Failed to receive items', 'error');
+                                  } finally {
+                                    setLoading(false);
+                                  }
+                                }}
+                              >
+                                Receive Selected Items
+                              </Button>
+                            </Box>
+                          </>
+                        )}
+                      </Box>
+                    )}
+
+                    {/* Make Payment Tab */}
+                    {rightTab === 2 && (
+                      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+                        <Typography variant="h6" gutterBottom>
+                          Make Payment for Purchase Orders
+                        </Typography>
+
+                        {/* PO Selection */}
+                        <FormControl fullWidth sx={{ mb: 3, maxWidth: 400 }}>
+                          <InputLabel>Select Purchase Order</InputLabel>
+                          <Select
+                            value={selectedPaymentPO || ''}
+                            label="Select Purchase Order"
+                            onChange={async (e) => {
+                              const poId = Number(e.target.value);
+                              setSelectedPaymentPO(poId);
+                              
+                              // Fetch PO details
+                              try {
+                                setLoading(true);
+                                const response = await axios.get(`/api/purchase-orders/${poId}`);
+                                setPaymentPODetails(response.data);
+                                setPaymentAmount(response.data.total_amount - (response.data.paid_amount || 0));
+                              } catch (error) {
+                                console.error('Failed to fetch PO details:', error);
+                                showNotification('Failed to load purchase order details', 'error');
+                              } finally {
+                                setLoading(false);
+                              }
+                            }}
+                          >
+                            {purchaseOrders
+                              .filter(po => po.payment_status !== 'Paid this month')
+                              .map(po => (
+                                <MenuItem key={po.id} value={po.id}>
+                                  {po.po_number} - {formatDate(po.order_date)} ({formatCurrency(po.total_amount)})
+                                </MenuItem>
+                              ))}
+                          </Select>
+                        </FormControl>
+
+                        {/* Payment Form */}
+                        {selectedPaymentPO && paymentPODetails && (
+                          <Paper sx={{ p: 3 }}>
+                            <Grid container spacing={3}>
+                              <Grid item xs={12}>
+                                <Typography variant="subtitle2" gutterBottom>
+                                  Purchase Order Details
+                                </Typography>
+                                <Divider sx={{ mb: 2 }} />
+                                <Grid container spacing={2}>
+                                  <Grid item xs={6}>
+                                    <Typography variant="body2" color="text.secondary">PO Number</Typography>
+                                    <Typography variant="body1">{paymentPODetails.po_number}</Typography>
+                                  </Grid>
+                                  <Grid item xs={6}>
+                                    <Typography variant="body2" color="text.secondary">Order Date</Typography>
+                                    <Typography variant="body1">{formatDate(paymentPODetails.order_date)}</Typography>
+                                  </Grid>
+                                  <Grid item xs={6}>
+                                    <Typography variant="body2" color="text.secondary">Total Amount</Typography>
+                                    <Typography variant="h6">{formatCurrency(paymentPODetails.total_amount)}</Typography>
+                                  </Grid>
+                                  <Grid item xs={6}>
+                                    <Typography variant="body2" color="text.secondary">Amount Paid</Typography>
+                                    <Typography variant="h6" color="success.main">
+                                      {formatCurrency(paymentPODetails.paid_amount || 0)}
+                                    </Typography>
+                                  </Grid>
+                                  <Grid item xs={12}>
+                                    <Alert severity="info">
+                                      <Typography variant="body2">
+                                        <strong>Balance Due:</strong> {formatCurrency(paymentPODetails.total_amount - (paymentPODetails.paid_amount || 0))}
+                                      </Typography>
+                                    </Alert>
+                                  </Grid>
+                                </Grid>
+                              </Grid>
+
+                              <Grid item xs={12}>
+                                <Divider />
+                              </Grid>
+
+                              <Grid item xs={12}>
+                                <Typography variant="subtitle2" gutterBottom>
+                                  Payment Information
+                                </Typography>
+                              </Grid>
+
+                              <Grid item xs={12} sm={6}>
+                                <TextField
+                                  fullWidth
+                                  label="Payment Amount"
+                                  type="number"
+                                  value={paymentAmount}
+                                  onChange={(e) => setPaymentAmount(Number(e.target.value))}
+                                  InputProps={{
+                                    startAdornment: <Typography sx={{ mr: 1 }}>₱</Typography>
+                                  }}
+                                  inputProps={{
+                                    min: 0,
+                                    max: paymentPODetails.total_amount - (paymentPODetails.paid_amount || 0),
+                                    step: 0.01
+                                  }}
+                                />
+                              </Grid>
+
+                              <Grid item xs={12} sm={6}>
+                                <FormControl fullWidth>
+                                  <InputLabel>Payment Method</InputLabel>
+                                  <Select
+                                    value={paymentMethod}
+                                    label="Payment Method"
+                                    onChange={(e) => setPaymentMethod(e.target.value as any)}
+                                  >
+                                    <MenuItem value="cash">Cash</MenuItem>
+                                    <MenuItem value="check">Check</MenuItem>
+                                    <MenuItem value="bank_transfer">Bank Transfer</MenuItem>
+                                  </Select>
+                                </FormControl>
+                              </Grid>
+
+                              <Grid item xs={12}>
+                                <TextField
+                                  fullWidth
+                                  label="Payment Notes"
+                                  multiline
+                                  rows={3}
+                                  value={paymentNotes}
+                                  onChange={(e) => setPaymentNotes(e.target.value)}
+                                  placeholder="Reference number, check number, etc."
+                                />
+                              </Grid>
+
+                              <Grid item xs={12}>
+                                <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                                  <Button
+                                    variant="outlined"
+                                    onClick={() => {
+                                      setSelectedPaymentPO(null);
+                                      setPaymentPODetails(null);
+                                      setPaymentAmount(0);
+                                      setPaymentNotes('');
+                                    }}
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button
+                                    variant="contained"
+                                    color="success"
+                                    startIcon={<PaymentIcon />}
+                                    disabled={loading || paymentAmount <= 0}
+                                    onClick={async () => {
+                                      try {
+                                        setLoading(true);
+                                        await axios.post(`/api/purchase-orders/${selectedPaymentPO}/payment`, {
+                                          amount: paymentAmount,
+                                          payment_method: paymentMethod,
+                                          notes: paymentNotes
+                                        });
+
+                                        showNotification('Payment recorded successfully', 'success');
+                                        setSelectedPaymentPO(null);
+                                        setPaymentPODetails(null);
+                                        setPaymentAmount(0);
+                                        setPaymentNotes('');
+                                        
+                                        if (selectedSupplier) {
+                                          fetchPurchaseOrders(selectedSupplier.id);
+                                        }
+                                      } catch (error) {
+                                        console.error('Failed to record payment:', error);
+                                        showNotification('Failed to record payment', 'error');
+                                      } finally {
+                                        setLoading(false);
+                                      }
+                                    }}
+                                  >
+                                    Record Payment
+                                  </Button>
+                                </Box>
+                              </Grid>
+                            </Grid>
+                          </Paper>
+                        )}
+                      </Box>
+                    )}
+
+                    {/* Inventory History Tab */}
+                    {rightTab === 3 && (
                       <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
                         <Typography variant="body2" color="text.secondary">
                           Inventory history for {selectedSupplier.name} will be displayed here
@@ -1618,9 +2206,9 @@ const Suppliers: React.FC = () => {
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {selectedSupplier.recentOrders.map((order: { id: number; order_number: string; order_date: string; status: string; total_amount: number }) => (
+                          {selectedSupplier.recentOrders.map((order: { id: number; po_number: string; order_date: string; status: string; total_amount: number }) => (
                             <TableRow key={order.id}>
-                              <TableCell>{order.order_number}</TableCell>
+                              <TableCell>{order.po_number}</TableCell>
                               <TableCell>{formatDate(order.order_date)}</TableCell>
                               <TableCell>
                                 <Chip 
@@ -1743,10 +2331,15 @@ const Suppliers: React.FC = () => {
           <DialogContent>
             <Box sx={{ pt: 2 }}>
               <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <Alert severity="info" sx={{ mb: 2 }}>
-                    Purchase order number will be auto-generated
-                  </Alert>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Purchase Order Number"
+                    required
+                    value={poOrderNumber}
+                    onChange={(e) => setPoOrderNumber(e.target.value)}
+                    placeholder="e.g., PO001"
+                  />
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <TextField
@@ -1757,16 +2350,6 @@ const Suppliers: React.FC = () => {
                     InputLabelProps={{ shrink: true }}
                     value={poOrderDate}
                     onChange={(e) => setPoOrderDate(e.target.value)}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Expected Delivery (Optional)"
-                    type="date"
-                    InputLabelProps={{ shrink: true }}
-                    value={poExpectedDate}
-                    onChange={(e) => setPoExpectedDate(e.target.value)}
                   />
                 </Grid>
                 <Grid item xs={12}>
@@ -1836,6 +2419,22 @@ const Suppliers: React.FC = () => {
                       >
                         Add Product
                       </Button>
+                      <Button
+                        variant="contained"
+                        startIcon={<AddIcon />}
+                        size="small"
+                        onClick={() => {
+                          // Add a new manual item
+                          setPoItems([...poItems, {
+                            id: Date.now().toString(),
+                            product_name: '',
+                            quantity: 1,
+                            unit_price: 0
+                          }]);
+                        }}
+                      >
+                        Add Item Manually
+                      </Button>
                     </Box>
                   </Box>
                   
@@ -1857,7 +2456,12 @@ const Suppliers: React.FC = () => {
                                 size="small"
                                 required
                                 value={item.product_name}
-                                disabled
+                                disabled={!!item.product_id}
+                                onChange={(e) => {
+                                  const newItems = [...poItems];
+                                  newItems[index].product_name = e.target.value;
+                                  setPoItems(newItems);
+                                }}
                               />
                             </Grid>
                             <Grid item xs={1.3}>
@@ -1933,7 +2537,7 @@ const Suppliers: React.FC = () => {
             <Button onClick={() => setPurchaseOrderDialog(false)}>Cancel</Button>
             <Button 
               variant="contained"
-              disabled={loading || poItems.length === 0}
+              disabled={loading || poItems.length === 0 || !poOrderNumber.trim()}
               onClick={handleCreatePurchaseOrder}
             >
               Create Purchase Order
@@ -1953,13 +2557,53 @@ const Suppliers: React.FC = () => {
           </DialogTitle>
           <DialogContent>
             <Box sx={{ pt: 2 }}>
+              <TextField
+                fullWidth
+                size="small"
+                placeholder="Search products..."
+                value={productSearchTerm}
+                onChange={(e) => setProductSearchTerm(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" />
+                    </InputAdornment>
+                  )
+                }}
+                sx={{ mb: 2 }}
+              />
               {lowStockProducts.length === 0 ? (
                 <Alert severity="info">
                   No low stock products found for this supplier.
                 </Alert>
               ) : (
-                <List>
-                  {lowStockProducts.map((product) => (
+                <>
+                  {lowStockProducts
+                    .filter((product) => {
+                      if (!productSearchTerm.trim()) return true;
+                      const searchLower = productSearchTerm.toLowerCase().trim();
+                      return (
+                        product.name?.toLowerCase().includes(searchLower) ||
+                        product.brand?.toLowerCase().includes(searchLower) ||
+                        product.sku?.toLowerCase().includes(searchLower)
+                      );
+                    }).length === 0 ? (
+                      <Alert severity="info" sx={{ mt: 2 }}>
+                        No products match your search criteria.
+                      </Alert>
+                    ) : (
+                      <List>
+                        {lowStockProducts
+                          .filter((product) => {
+                            if (!productSearchTerm.trim()) return true;
+                            const searchLower = productSearchTerm.toLowerCase().trim();
+                            return (
+                              product.name?.toLowerCase().includes(searchLower) ||
+                              product.brand?.toLowerCase().includes(searchLower) ||
+                              product.sku?.toLowerCase().includes(searchLower)
+                            );
+                          })
+                          .map((product) => (
                     <ListItem 
                       key={product.id}
                       secondaryAction={
@@ -1991,16 +2635,9 @@ const Suppliers: React.FC = () => {
                     >
                       <ListItemText
                         primary={
-                          <Box>
-                            <Typography variant="body1">
-                              {product.brand && `${product.brand} - `}{product.name}
-                            </Typography>
-                            {product.sku && (
-                              <Typography variant="caption" color="text.secondary">
-                                SKU: {product.sku}
-                              </Typography>
-                            )}
-                          </Box>
+                          <Typography variant="body1">
+                            {product.brand && `${product.brand} - `}{product.name}
+                          </Typography>
                         }
                         secondary={
                           <Box>
@@ -2015,7 +2652,9 @@ const Suppliers: React.FC = () => {
                       />
                     </ListItem>
                   ))}
-                </List>
+                      </List>
+                    )}
+                </>
               )}
             </Box>
           </DialogContent>
@@ -2032,7 +2671,7 @@ const Suppliers: React.FC = () => {
           fullWidth
         >
           <DialogTitle>
-            Purchase Order Details - {selectedPO?.order_number}
+            Purchase Order Details - {selectedPO?.po_number}
           </DialogTitle>
           <DialogContent>
             <Box sx={{ pt: 2 }}>
@@ -2085,12 +2724,188 @@ const Suppliers: React.FC = () => {
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setPoDetailDialog(false)}>Close</Button>
+            {selectedPO?.receiving_status !== 'Received' && (
+              <Button 
+                variant="contained"
+                startIcon={<InventoryIcon />}
+                onClick={() => {
+                  setPoDetailDialog(false);
+                  handleOpenReceiveDialog(selectedPO);
+                }}
+                disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+                color="primary"
+              >
+                Receive Items
+              </Button>
+            )}
+            {selectedPO?.payment_status !== 'Paid this month' && (
+              <Button 
+                variant="contained"
+                startIcon={<PaymentIcon />}
+                onClick={() => {
+                  setPoDetailDialog(false);
+                  handleOpenReceiveDialog(selectedPO);
+                }}
+                disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+                color="success"
+              >
+                Record Payment
+              </Button>
+            )}
+          </DialogActions>
+        </Dialog>
+
+        {/* Receive Items & Payment Dialog */}
+        <Dialog 
+          open={receiveDialog} 
+          onClose={() => setReceiveDialog(false)}
+          maxWidth="md"
+          fullWidth
+        >
+          <DialogTitle>
+            Receive Items & Payment - {selectedPO?.po_number}
+          </DialogTitle>
+          <DialogContent>
+            <Box sx={{ pt: 2 }}>
+              <Grid container spacing={3}>
+                {/* Receiving Section */}
+                <Grid item xs={12}>
+                  <Typography variant="h6" gutterBottom>
+                    Items to Receive
+                  </Typography>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Product</TableCell>
+                          <TableCell align="center">Ordered</TableCell>
+                          <TableCell align="center">Already Received</TableCell>
+                          <TableCell align="center">Remaining</TableCell>
+                          <TableCell align="center" sx={{ minWidth: 120 }}>Receive Now</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {receivingItems.map((item, index) => (
+                          <TableRow key={item.id}>
+                            <TableCell>{item.product_name}</TableCell>
+                            <TableCell align="center">{item.ordered_quantity}</TableCell>
+                            <TableCell align="center">{item.received_quantity}</TableCell>
+                            <TableCell align="center">
+                              {item.ordered_quantity - item.received_quantity}
+                            </TableCell>
+                            <TableCell align="center">
+                              <TextField
+                                type="number"
+                                size="small"
+                                value={item.receiving_now}
+                                onChange={(e) => {
+                                  const value = Math.max(0, Math.min(
+                                    Number(e.target.value),
+                                    item.ordered_quantity - item.received_quantity
+                                  ));
+                                  const newItems = [...receivingItems];
+                                  newItems[index].receiving_now = value;
+                                  setReceivingItems(newItems);
+                                }}
+                                inputProps={{
+                                  min: 0,
+                                  max: item.ordered_quantity - item.received_quantity,
+                                  style: { textAlign: 'center' }
+                                }}
+                                sx={{ width: 80 }}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Grid>
+
+                {/* Payment Section */}
+                <Grid item xs={12}>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="h6" gutterBottom>
+                    Payment Information
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={4}>
+                      <TextField
+                        fullWidth
+                        label="Payment Amount"
+                        type="number"
+                        value={paymentAmount}
+                        onChange={(e) => setPaymentAmount(Number(e.target.value))}
+                        InputProps={{
+                          startAdornment: <Typography sx={{ mr: 1 }}>₱</Typography>
+                        }}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <FormControl fullWidth>
+                        <InputLabel>Payment Method</InputLabel>
+                        <Select
+                          value={paymentMethod}
+                          label="Payment Method"
+                          onChange={(e) => setPaymentMethod(e.target.value as any)}
+                        >
+                          <MenuItem value="cash">Cash</MenuItem>
+                          <MenuItem value="check">Check</MenuItem>
+                          <MenuItem value="bank_transfer">Bank Transfer</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <Typography variant="body2" color="text.secondary">
+                        Total PO Amount
+                      </Typography>
+                      <Typography variant="h6">
+                        {formatCurrency(selectedPO?.total_amount || 0)}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12}>
+                      <TextField
+                        fullWidth
+                        label="Payment Notes (Optional)"
+                        multiline
+                        rows={2}
+                        value={paymentNotes}
+                        onChange={(e) => setPaymentNotes(e.target.value)}
+                        placeholder="Reference number, check number, etc."
+                      />
+                    </Grid>
+                  </Grid>
+                </Grid>
+
+                {/* Summary */}
+                <Grid item xs={12}>
+                  <Alert severity="info">
+                    <Typography variant="body2">
+                      <strong>Summary:</strong><br/>
+                      • Receiving {receivingItems.reduce((sum, item) => sum + item.receiving_now, 0)} items<br/>
+                      • Recording payment: {formatCurrency(paymentAmount)}
+                    </Typography>
+                  </Alert>
+                </Grid>
+              </Grid>
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setReceiveDialog(false)}>
+              Cancel
+            </Button>
             <Button 
-              variant="outlined"
-              startIcon={<EditIcon />}
-              disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+              variant="contained"
+              onClick={handleReceiveItems}
+              disabled={loading || (receivingItems.every(item => item.receiving_now === 0) && paymentAmount <= 0)}
+              startIcon={<CheckCircleIcon />}
+              color="primary"
             >
-              Edit Order
+              {receivingItems.some(item => item.receiving_now > 0) && paymentAmount > 0
+                ? 'Receive & Pay'
+                : receivingItems.some(item => item.receiving_now > 0)
+                ? 'Receive Items'
+                : 'Record Payment'}
             </Button>
           </DialogActions>
         </Dialog>
