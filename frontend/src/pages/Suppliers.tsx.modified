@@ -5,8 +5,7 @@ import {
   Chip, Alert, Snackbar, Tooltip, IconButton, Tab, Tabs, Paper,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Accordion, AccordionSummary, AccordionDetails, Divider, LinearProgress,
-  Menu, MenuItem as MuiMenuItem, Checkbox, List, ListItem, RadioGroup, FormControlLabel, Radio,
-  ListItemButton, ListItemText, Badge, Stack, InputAdornment
+  Menu, MenuItem as MuiMenuItem, Checkbox, List, ListItem, RadioGroup, FormControlLabel, Radio
 } from '@mui/material';
 import {
   Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon, Search as SearchIcon,
@@ -14,9 +13,7 @@ import {
   Business as BusinessIcon, History as HistoryIcon,
   ExpandMore as ExpandMoreIcon,
   ContactMail as ContactIcon, Phone as PhoneIcon,
-  Email as EmailIcon, Language as WebsiteIcon, Close as CloseIcon,
-  Receipt as ReceiptIcon, Payment as PaymentIcon, Inventory as InventoryIcon,
-  CheckCircle as CheckCircleIcon, Warning as WarningIcon, Schedule as ScheduleIcon
+  Email as EmailIcon, Language as WebsiteIcon, Close as CloseIcon
 } from '@mui/icons-material';
 import { DataGrid, GridColDef, GridRowSelectionModel } from '@mui/x-data-grid';
 import dataGridStickySx from '../utils/dataGridSticky';
@@ -69,20 +66,7 @@ interface SupplierDetail extends Supplier {
   }>;
 }
 
-interface PurchaseOrder {
-  id: number;
-  order_number: string;
-  supplier_id: number;
-  supplier_name: string;
-  order_date: string;
-  expected_delivery_date?: string;
-  status: 'Open' | 'Partial' | 'Received' | 'Closed';
-  payment_status: 'Unpaid' | 'Paid this month' | 'To be paid next month' | 'Partially Paid';
-  receiving_status: 'Awaiting' | 'Partially Received' | 'Received';
-  total_amount: number;
-  items_summary: string;
-  notes?: string;
-}
+
 
 const Suppliers: React.FC = () => {
   const { user } = useAuth();
@@ -97,7 +81,6 @@ const Suppliers: React.FC = () => {
   const [activeSupplierTabIndex, setActiveSupplierTabIndex] = useState<number | null>(null);
   const [supplierProducts, setSupplierProducts] = useState<Record<number, SupplierDetail['products']>>({});
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedItems, setSelectedItems] = useState<GridRowSelectionModel>([]);
   
@@ -106,26 +89,9 @@ const Suppliers: React.FC = () => {
   const [detailDialog, setDetailDialog] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [importDialog, setImportDialog] = useState(false);
-  const [purchaseOrderDialog, setPurchaseOrderDialog] = useState(false);
-  const [poDetailDialog, setPoDetailDialog] = useState(false);
-  const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
-  const [lowStockDialog, setLowStockDialog] = useState(false);
-  const [lowStockProducts, setLowStockProducts] = useState<any[]>([]);
-  
-  // PO Form states
-  const [poOrderNumber, setPoOrderNumber] = useState('');
-  const [poOrderDate, setPoOrderDate] = useState(new Date().toISOString().split('T')[0]);
-  const [poExpectedDate, setPoExpectedDate] = useState('');
-  const [poNotes, setPoNotes] = useState('');
-  const [poItems, setPoItems] = useState<Array<{id: string; product_id?: number; product_name: string; quantity: number; unit_price: number}>>([]);
   
   // Form states
-  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
-  
-  // PO filters for right pane
-  const [poPaymentFilter, setPoPaymentFilter] = useState<'all' | 'unpaid' | 'paid' | 'partial'>('all');
-  const [poStatusFilter, setPoStatusFilter] = useState<'all' | 'open' | 'partial' | 'received' | 'closed'>('all');
-  const [rightTab, setRightTab] = useState(0); // 0: POs, 1: Inventory History
+  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | SupplierDetail | null>(null);
   const isSupplierDetail = (s: Supplier | SupplierDetail | null): s is SupplierDetail => {
     return !!s && (s as SupplierDetail).recentOrders !== undefined && (s as SupplierDetail).products !== undefined;
   };
@@ -295,147 +261,17 @@ const Suppliers: React.FC = () => {
     }
   }, [page, searchTerm, cityFilter, stateFilter, statusFilter]);
 
-  // Fetch purchase orders for selected supplier
-  const fetchPurchaseOrders = useCallback(async (supplierId: number) => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams();
-      params.append('supplier_id', supplierId.toString());
-      if (poPaymentFilter !== 'all') params.append('payment_status', poPaymentFilter);
-      if (poStatusFilter !== 'all') params.append('status', poStatusFilter);
-      
-      const response = await axios.get(`/api/purchase-orders?${params}`);
-      setPurchaseOrders(response.data.orders || response.data || []);
-    } catch (error) {
-      console.error('Failed to fetch purchase orders:', error);
-      showNotification('Failed to fetch purchase orders', 'error');
-      setPurchaseOrders([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [poPaymentFilter, poStatusFilter]);
-
   useEffect(() => {
-    fetchSuppliers();
-  }, [fetchSuppliers]);
-
-  useEffect(() => {
-    if (selectedSupplier) {
-      fetchPurchaseOrders(selectedSupplier.id);
-    } else {
-      setPurchaseOrders([]);
-    }
-  }, [selectedSupplier, poPaymentFilter, poStatusFilter, fetchPurchaseOrders]);
-
-  // Create purchase order
-  const handleCreatePurchaseOrder = async () => {
-    if (!selectedSupplier) {
-      showNotification('No supplier selected', 'error');
-      return;
-    }
-
-    if (poItems.length === 0) {
-      showNotification('Please add at least one item to the order', 'error');
-      return;
-    }
-
-    // Validate all items have required fields
-    const invalidItems = poItems.filter(item => 
-      !item.product_name.trim() || item.quantity <= 0 || item.unit_price <= 0
-    );
-
-    if (invalidItems.length > 0) {
-      showNotification('All items must have a name, quantity, and unit price', 'error');
-      return;
-    }
-
-    try {
-      setLoading(true);
-
-      // Validate all items have product_id
-      const itemsWithoutProductId = poItems.filter(item => !item.product_id);
-      if (itemsWithoutProductId.length > 0) {
-        showNotification('All items must be selected from the product list', 'error');
-        return;
-      }
-
-      // Prepare items for API
-      const orderItems = poItems.map(item => ({
-        product_id: item.product_id,
-        quantity: item.quantity,
-        unit_cost: item.unit_price
-      }));
-
-      const response = await axios.post('/api/purchase-orders', {
-        supplier_id: selectedSupplier.id,
-        order_date: poOrderDate,
-        expected_date: poExpectedDate || null,
-        items: orderItems,
-        notes: poNotes || null
-      });
-
-      showNotification(`Purchase order ${response.data.po_number} created successfully`, 'success');
-      
-      // Reset form
-      setPoOrderDate(new Date().toISOString().split('T')[0]);
-      setPoExpectedDate('');
-      setPoNotes('');
-      setPoItems([]);
-      setPurchaseOrderDialog(false);
-
-      // Refresh purchase orders list
-      if (selectedSupplier) {
-        fetchPurchaseOrders(selectedSupplier.id);
-      }
-
-    } catch (error) {
-      console.error('Failed to create purchase order:', error);
-      showNotification(
-        axios.isAxiosError(error) 
-          ? error.response?.data?.message || 'Failed to create purchase order'
-          : 'Failed to create purchase order',
-        'error'
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+    if (activeTab === 0) fetchSuppliers();
+  }, [activeTab, fetchSuppliers]);
 
   // Utility functions
   const showNotification = (message: string, severity: 'success' | 'error' | 'warning' | 'info' = 'success') => {
     setSnackbar({ open: true, message, severity });
   };
 
-  const formatCurrency = (amount: number | string) => `₱${Number(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const formatDate = (dateStr: string) => new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-
-  const getPaymentStatusColor = (status: string): 'success' | 'error' | 'warning' | 'info' | 'default' => {
-    switch (status) {
-      case 'Paid this month': return 'success';
-      case 'Unpaid': return 'error';
-      case 'To be paid next month': return 'warning';
-      case 'Partially Paid': return 'info';
-      default: return 'default';
-    }
-  };
-
-  const getReceivingStatusColor = (status: string): 'success' | 'error' | 'warning' | 'default' => {
-    switch (status) {
-      case 'Received': return 'success';
-      case 'Partially Received': return 'warning';
-      case 'Awaiting': return 'error';
-      default: return 'default';
-    }
-  };
-
-  const getReceivingStatusIcon = (status: string): React.ReactElement | undefined => {
-    switch (status) {
-      case 'Received': return <CheckCircleIcon fontSize="small" />;
-      case 'Partially Received': return <WarningIcon fontSize="small" />;
-      case 'Awaiting': return <ScheduleIcon fontSize="small" />;
-      default: return undefined;
-    }
-  };
+  const formatCurrency = (amount: number | string) => `$${Number(amount || 0).toFixed(2)}`;
+  const formatDate = (dateStr: string) => new Date(dateStr).toLocaleDateString();
 
   const resetForm = () => {
     setEditingSupplier(null);
@@ -462,7 +298,7 @@ const Suppliers: React.FC = () => {
     const existingIndex = supplierTabs.findIndex(s => s.id === supplierId);
     if (existingIndex !== -1) {
       setActiveSupplierTabIndex(existingIndex);
-      setActiveTab(1); // switch to supplier tabs area (we'll render at index 1)
+      setActiveTab(2); // switch to supplier tabs area (we'll render at index 2)
       return;
     }
 
@@ -471,7 +307,7 @@ const Suppliers: React.FC = () => {
     setSupplierTabs(next);
     const newIndex = next.length - 1;
     setActiveSupplierTabIndex(newIndex);
-    setActiveTab(1);
+    setActiveTab(2);
 
     // fetch supplier details (includes products) from existing backend endpoint
     try {
@@ -503,7 +339,7 @@ const Suppliers: React.FC = () => {
     } else if (index <= (activeSupplierTabIndex ?? -1)) {
       const newIndex = Math.max(0, (activeSupplierTabIndex ?? 1) - 1);
       setActiveSupplierTabIndex(newIndex);
-      setActiveTab(1);
+      setActiveTab(2);
     }
   };
 
@@ -755,7 +591,7 @@ const Suppliers: React.FC = () => {
 
         {/* Toolbar (only show on Supplier Directory tab) */}
         {activeTab === 0 && (
-        <Card sx={{ mb: 3, display: 'none' }}>
+        <Card sx={{ mb: 3 }}>
           <CardContent>
             <Grid container spacing={2} alignItems="center">
               <Grid item xs={12} md={3}>
@@ -824,7 +660,7 @@ const Suppliers: React.FC = () => {
                     variant="outlined"
                     startIcon={<RefreshIcon />}
                     onClick={() => {
-                      if (activeTab === 0) fetchSuppliers();
+                      fetchSuppliers();
                     }}
                     disabled={loading}
                   >
@@ -839,436 +675,233 @@ const Suppliers: React.FC = () => {
 
         {/* Content based on active tab */}
         {activeTab === 0 && (
-          <Grid container spacing={3}>
-            {/* Left Pane - Suppliers List */}
-            <Grid item xs={12} md={3}>
-              <Card sx={{ height: 'calc(100vh - 130px)', display: 'flex', flexDirection: 'column' }}>
-                <CardContent sx={{ p: 2, pb: 1 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                      Suppliers
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 0.5 }}>
-                      <Tooltip title="Add Supplier">
-                        <IconButton 
-                          size="small"
-                          onClick={() => {
-                            setEditingSupplier({ is_active: true });
-                            setSupplierDialog(true);
-                          }}
-                          disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
-                        >
-                          <AddIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Import">
-                        <IconButton 
-                          size="small"
-                          onClick={() => setImportDialog(true)}
-                          disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
-                        >
-                          <UploadIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Export CSV">
-                        <IconButton 
-                          size="small"
-                          onClick={() => handleExport('csv')}
-                          disabled={loading}
-                        >
-                          <DownloadIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Refresh">
-                        <IconButton 
-                          size="small"
-                          onClick={fetchSuppliers}
-                          disabled={loading}
-                        >
-                          <RefreshIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  </Box>
+          <Grid container spacing={2}>
+            {/* Left Side - Suppliers List */}
+            <Grid item xs={12} md={4}>
+              <Card sx={{ height: 'calc(100vh - 280px)' }}>
+                <CardContent sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
+                  <Typography variant="h6" sx={{ mb: 2 }}>Suppliers</Typography>
                   
-                  {/* Search */}
+                  {/* Search box for suppliers */}
                   <TextField
                     fullWidth
                     size="small"
                     placeholder="Search suppliers..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
+                    sx={{ mb: 2 }}
                     InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <SearchIcon fontSize="small" />
-                        </InputAdornment>
-                      )
+                      startAdornment: <SearchIcon sx={{ mr: 1, color: 'action.active' }} />
                     }}
-                    sx={{ mb: 1.5 }}
                   />
 
-                  {/* Status Filter */}
-                  <FormControl fullWidth size="small" sx={{ mb:0 }}>
-                    <InputLabel>Status</InputLabel>
-                    <Select
-                      value={statusFilter}
-                      label="Status"
-                      onChange={(e) => setStatusFilter(e.target.value)}
-                    >
-                      <MenuItem value="all">All</MenuItem>
-                      <MenuItem value="active">Active</MenuItem>
-                      <MenuItem value="inactive">Inactive</MenuItem>
-                    </Select>
-                  </FormControl>
-                </CardContent>
-
-                {/* Supplier List */}
-                <Box sx={{ flex: 1, overflow: 'auto', px: 1 }}>
-                  <List dense>
-                    {suppliers.map((supplier) => (
-                      <ListItem
-                        key={supplier.id}
-                        disablePadding
-                        sx={{ mb: 0 }}
-                      >
-                        <ListItemButton
+                  {/* Suppliers List */}
+                  <List sx={{ flex: 1, overflow: 'auto', p: 0 }}>
+                    {loading && suppliers.length === 0 ? (
+                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                        <LinearProgress sx={{ width: '50%' }} />
+                      </Box>
+                    ) : suppliers.length === 0 ? (
+                      <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                        <Typography>No suppliers found</Typography>
+                      </Box>
+                    ) : (
+                      suppliers.map((supplier) => (
+                        <ListItem
+                          key={supplier.id}
+                          button
                           selected={selectedSupplier?.id === supplier.id}
-                          onClick={() => setSelectedSupplier(supplier)}
+                          onClick={() => {
+                            setSelectedSupplier(supplier);
+                            fetchSupplierDetail(supplier.id);
+                          }}
                           sx={{
+                            mb: 1,
                             borderRadius: 1,
-                            '&.Mui-selected': {
-                              backgroundColor: 'primary.light',
-                              '&:hover': {
-                                backgroundColor: 'primary.light',
-                              }
+                            border: '1px solid',
+                            borderColor: selectedSupplier?.id === supplier.id ? 'primary.main' : 'divider',
+                            '&:hover': {
+                              borderColor: 'primary.main',
+                              backgroundColor: 'action.hover'
                             }
                           }}
                         >
-                          <ListItemText
-                            primary={
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                  {supplier.name}
-                                </Typography>
-                                <Badge badgeContent={supplier.pending_orders} color="error" />
-                              </Box>
-                            }
-                            secondary={
-                              <Box>
-                                <Typography variant="caption" display="block" color="text.secondary">
-                                  {supplier.contact_person || 'No contact'}
-                                </Typography>
-                                <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5 }}>
-                                  <Chip
-                                    label={supplier.is_active ? 'Active' : 'Inactive'}
-                                    size="small"
-                                    color={supplier.is_active ? 'success' : 'default'}
-                                    sx={{ height: 20, fontSize: 10 }}
-                                  />
-                                  <Chip
-                                    label={`${supplier.total_orders} orders`}
-                                    size="small"
-                                    sx={{ height: 20, fontSize: 10 }}
-                                  />
-                                </Box>
-                              </Box>
-                            }
-                          />
-                          <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
-                            <IconButton
-                              size="small"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEditingSupplier(supplier);
-                                setSupplierDialog(true);
-                              }}
-                            >
-                              <EditIcon fontSize="small" />
-                            </IconButton>
+                          <Box sx={{ width: '100%' }}>
+                            <Typography variant="body1" fontWeight="medium">
+                              {supplier.name}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {supplier.city && supplier.state ? `${supplier.city}, ${supplier.state}` : 'No location'}
+                            </Typography>
+                            <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
+                              <Chip
+                                size="small"
+                                label={`${supplier.total_orders || 0} orders`}
+                                sx={{ fontSize: '0.7rem', height: 20 }}
+                              />
+                              <Chip
+                                size="small"
+                                label={supplier.is_active ? 'Active' : 'Inactive'}
+                                color={supplier.is_active ? 'success' : 'default'}
+                                sx={{ fontSize: '0.7rem', height: 20 }}
+                              />
+                            </Box>
                           </Box>
-                        </ListItemButton>
-                      </ListItem>
-                    ))}
+                        </ListItem>
+                      ))
+                    )}
                   </List>
-                </Box>
+                </CardContent>
               </Card>
             </Grid>
 
-            {/* Right Pane - Purchase Orders / Inventory History */}
-            <Grid item xs={12} md={9}>
-              <Card sx={{ height: 'calc(100vh - 130px)', display: 'flex', flexDirection: 'column' }}>
-                {selectedSupplier ? (
-                  <>
-                    <CardContent sx={{ p: 2, pb: 1 }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            {/* Right Side - Supplier Details */}
+            <Grid item xs={12} md={8}>
+              <Card sx={{ height: 'calc(100vh - 280px)' }}>
+                <CardContent sx={{ p: 2, height: '100%', overflow: 'auto' }}>
+                  {!selectedSupplier ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'text.secondary' }}>
+                      <BusinessIcon sx={{ fontSize: 64, mb: 2, opacity: 0.3 }} />
+                      <Typography variant="h6">Select a supplier</Typography>
+                      <Typography variant="body2">Click on a supplier from the list to view details</Typography>
+                    </Box>
+                  ) : (
+                    <Box>
+                      {/* Supplier Header */}
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 3, pb: 2, borderBottom: 1, borderColor: 'divider' }}>
                         <Box>
-                          <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                            {selectedSupplier.name}
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            {selectedSupplier.contact_person} • {selectedSupplier.phone}
-                          </Typography>
+                          <Typography variant="h5" fontWeight="bold">{selectedSupplier.name}</Typography>
+                          {selectedSupplier.contact_person && (
+                            <Typography variant="body2" color="text.secondary">
+                              <ContactIcon sx={{ fontSize: 16, mr: 0.5, verticalAlign: 'middle' }} />
+                              {selectedSupplier.contact_person}
+                            </Typography>
+                          )}
+                          {selectedSupplier.phone && (
+                            <Typography variant="body2" color="text.secondary">
+                              <PhoneIcon sx={{ fontSize: 16, mr: 0.5, verticalAlign: 'middle' }} />
+                              {selectedSupplier.phone}
+                            </Typography>
+                          )}
+                          {selectedSupplier.email && (
+                            <Typography variant="body2" color="text.secondary">
+                              <EmailIcon sx={{ fontSize: 16, mr: 0.5, verticalAlign: 'middle' }} />
+                              {selectedSupplier.email}
+                            </Typography>
+                          )}
                         </Box>
-                        <Button
-                          variant="contained"
-                          startIcon={<AddIcon />}
-                          onClick={() => setPurchaseOrderDialog(true)}
-                          disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
-                        >
-                          Create PO
-                        </Button>
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                          <Button
+                            size="small"
+                            startIcon={<EditIcon />}
+                            onClick={() => {
+                              setEditingSupplier(selectedSupplier);
+                              setSupplierDialog(true);
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="small"
+                            color="error"
+                            startIcon={<DeleteIcon />}
+                            onClick={() => setDeleteDialog(true)}
+                          >
+                            Delete
+                          </Button>
+                        </Box>
                       </Box>
 
-                      {/* Tabs */}
-                      <Tabs value={rightTab} onChange={(e, v) => setRightTab(v)}>
+                      {/* Tabs for different sections */}
+                      <Tabs value={0} sx={{ mb: 2 }}>
                         <Tab label="Purchase Orders" />
-                        <Tab label="Inventory History" />
+                        <Tab label="Purchase History" />
+                        <Tab label="Outstanding Orders" />
                       </Tabs>
-                    </CardContent>
 
-                    <Divider />
-
-                    {/* Tab Content */}
-                    {rightTab === 0 && (
-                      <>
-                        {/* PO Filters */}
-                        <CardContent sx={{ p: 2, pb: 1 }}>
-                          <Grid container spacing={2}>
-                            <Grid item xs={6}>
-                              <FormControl fullWidth size="small">
-                                <InputLabel>Payment Status</InputLabel>
-                                <Select
-                                  value={poPaymentFilter}
-                                  label="Payment Status"
-                                  onChange={(e) => setPoPaymentFilter(e.target.value as any)}
-                                >
-                                  <MenuItem value="all">All</MenuItem>
-                                  <MenuItem value="unpaid">Unpaid</MenuItem>
-                                  <MenuItem value="paid">Paid</MenuItem>
-                                  <MenuItem value="partial">Partially Paid</MenuItem>
-                                </Select>
-                              </FormControl>
-                            </Grid>
-                            <Grid item xs={6}>
-                              <FormControl fullWidth size="small">
-                                <InputLabel>Receiving Status</InputLabel>
-                                <Select
-                                  value={poStatusFilter}
-                                  label="Receiving Status"
-                                  onChange={(e) => setPoStatusFilter(e.target.value as any)}
-                                >
-                                  <MenuItem value="all">All</MenuItem>
-                                  <MenuItem value="open">Open</MenuItem>
-                                  <MenuItem value="partial">Partially Received</MenuItem>
-                                  <MenuItem value="received">Received</MenuItem>
-                                  <MenuItem value="closed">Closed</MenuItem>
-                                </Select>
-                              </FormControl>
-                            </Grid>
-                          </Grid>
-                        </CardContent>
-
-                        {/* Purchase Orders Table */}
-                        <Box sx={{ flex: 1, overflow: 'auto', px: 2 }}>
+                      {/* Purchase Orders Section */}
+                      <Box>
+                        <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2 }}>Recent Purchase Orders</Typography>
+                        
+                        {isSupplierDetail(selectedSupplier) && selectedSupplier.recentOrders && selectedSupplier.recentOrders.length > 0 ? (
                           <TableContainer>
-                            <Table size="small" stickyHeader>
+                            <Table size="small">
                               <TableHead>
                                 <TableRow>
-                                  <TableCell sx={{ fontWeight: 600 }}>Order #</TableCell>
-                                  <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
-                                  <TableCell sx={{ fontWeight: 600 }}>Items</TableCell>
-                                  <TableCell sx={{ fontWeight: 600 }}>Amount</TableCell>
-                                  <TableCell sx={{ fontWeight: 600 }}>Payment</TableCell>
-                                  <TableCell sx={{ fontWeight: 600 }}>Receiving</TableCell>
+                                  <TableCell>Order #</TableCell>
+                                  <TableCell>Date</TableCell>
+                                  <TableCell>Status</TableCell>
+                                  <TableCell align="right">Amount</TableCell>
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {purchaseOrders.length > 0 ? (
-                                  purchaseOrders.map((po) => (
-                                    <TableRow key={po.id} hover>
-                                      <TableCell>
-                                        <Typography
-                                          variant="body2"
-                                          sx={{ 
-                                            color: 'primary.main', 
-                                            cursor: 'pointer',
-                                            '&:hover': { textDecoration: 'underline' }
-                                          }}
-                                          onClick={() => {
-                                            setSelectedPO(po);
-                                            setPoDetailDialog(true);
-                                          }}
-                                        >
-                                          {po.order_number}
-                                        </Typography>
-                                      </TableCell>
-                                      <TableCell>{formatDate(po.order_date)}</TableCell>
-                                      <TableCell>
-                                        <Typography variant="caption" noWrap>
-                                          {po.items_summary || `${po.id} items`}
-                                        </Typography>
-                                      </TableCell>
-                                      <TableCell>{formatCurrency(po.total_amount)}</TableCell>
-                                      <TableCell>
-                                        <Chip
-                                          label={po.payment_status}
-                                          size="small"
-                                          color={getPaymentStatusColor(po.payment_status)}
-                                        />
-                                      </TableCell>
-                                      <TableCell>
-                                        <Chip
-                                          icon={getReceivingStatusIcon(po.receiving_status)}
-                                          label={po.receiving_status}
-                                          size="small"
-                                          color={getReceivingStatusColor(po.receiving_status)}
-                                        />
-                                      </TableCell>
-                                    </TableRow>
-                                  ))
-                                ) : (
-                                  <TableRow>
-                                    <TableCell colSpan={6} align="center">
-                                      <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-                                        No purchase orders found
-                                      </Typography>
+                                {selectedSupplier.recentOrders.map((order) => (
+                                  <TableRow key={order.id} hover>
+                                    <TableCell>{order.order_number}</TableCell>
+                                    <TableCell>{formatDate(order.order_date)}</TableCell>
+                                    <TableCell>
+                                      <Chip
+                                        size="small"
+                                        label={order.status}
+                                        color={
+                                          order.status === 'completed' ? 'success' :
+                                          order.status === 'pending' ? 'warning' :
+                                          order.status === 'cancelled' ? 'error' : 'default'
+                                        }
+                                      />
                                     </TableCell>
+                                    <TableCell align="right">{formatCurrency(order.total_amount)}</TableCell>
                                   </TableRow>
-                                )}
+                                ))}
                               </TableBody>
                             </Table>
                           </TableContainer>
-                        </Box>
-                      </>
-                    )}
-
-                    {rightTab === 1 && (
-                      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          Inventory history for {selectedSupplier.name} will be displayed here
-                        </Typography>
-                      </Box>
-                    )}
-                  </>
-                ) : (
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                    <Typography variant="body1" color="text.secondary">
-                      Select a supplier to view purchase orders
-                    </Typography>
-                  </Box>
-                )}
-              </Card>
-            </Grid>
-          </Grid>
-        )}
-        
-        {/* OLD TABLE VIEW - Remove or comment out */}
-        {false && activeTab === 0 && (
-          <Card>
-            <Box>
-              <Paper sx={{ p: 2, borderRadius: 2, bgcolor: '#fff', mb: 2, boxShadow: 'none' }} elevation={0}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                  <Typography variant="subtitle1" sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Supplier Directory</Typography>
-                  <Box>
-                    <Tooltip title="Customize columns">
-                      <IconButton size="small" onClick={openColumnsMenu}>
-                        <ExpandMoreIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                </Box>
-
-                <TableContainer sx={{
-                  border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden'
-                }}>
-                  <Box sx={{
-                    maxHeight: 600,
-                    overflow: 'auto',
-                    '&::-webkit-scrollbar': { width: 1, height: 1 },
-                    '&::-webkit-scrollbar-track': { background: 'transparent' },
-                    '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.28)', borderRadius: 999, minHeight: 20 },
-                    scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,0,0,0.28) transparent'
-                  }}>
-                    <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 48 }, '& .MuiTableRow-root': { height: 48 } }}>
-                      <TableHead>
-                        <TableRow sx={{ height: 48 }}>
-                          <TableCell sx={{ ...headerCellSx, py: 0.5, width: 48 }}>
-                            <Checkbox
-                              checked={suppliers.length > 0 && selectedItems.length === suppliers.length}
-                              indeterminate={selectedItems.length > 0 && selectedItems.length < suppliers.length}
-                              onChange={() => {
-                                if (selectedItems.length === suppliers.length) setSelectedItems([]);
-                                else setSelectedItems(suppliers.map(s => s.id));
-                              }}
-                              inputProps={{ 'aria-label': 'select all suppliers' }}
-                            />
-                          </TableCell>
-
-                          {columnOrder.map(col => {
-                            // the 'actions' column is rendered as a special sticky cell at the far right;
-                            // skip it when iterating columnOrder so we don't render a duplicate scrollable Actions column
-                            if (col === 'actions') return null;
-                            if (!visibleColumns[col]) return null;
-                            const rawLabel = col.replace(/_/g, ' ');
-                            const label = rawLabel.replace(/\b\w/g, (m: string) => m.toUpperCase());
-                            return (
-                              <TableCell key={col} sx={{ ...headerCellSx, py: 0.5, ...truncateSx }}>
-                                {label === 'Name' ? 'Company Name' : label}
-                              </TableCell>
-                            );
-                          })}
-
-                          <TableCell sx={{
-                            top: 0,
-                            position: 'sticky',
-                            right: 0,
-                            backgroundColor: '#f7f7f7',
-                            zIndex: 1200,
-                            borderLeft: '1px solid', borderColor: 'divider',
-                            whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pr: 0, py: 0.5,
-                            height: 48,
-                            minHeight: 48,
-                            width: 120,
-                            '& .MuiIconButton-root': { height: 32, width: 32, p: 0 }
-                          }}>
-                            <Box sx={{ mr: 1 }}>Actions</Box>
-                            <IconButton size="small" onClick={openColumnsMenu} sx={{ p: 0 }} aria-label="Columns">
-                              {/* use same vertical more icon as Inventory */}
-                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      </TableHead>
-
-                      <TableBody>
-                        {suppliers.length === 0 && !loading && (
-                          <TableRow>
-                            <TableCell colSpan={columnOrder.filter(col => visibleColumns[col]).length + 2} sx={{ textAlign: 'center', py: 4 }}>
-                              <Typography variant="body1" color="text.secondary">
-                                No suppliers found
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                                {statusFilter === 'active' ? 'No active suppliers' : 'No suppliers match your criteria'}
-                              </Typography>
-                            </TableCell>
-                          </TableRow>
+                        ) : (
+                          <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                            <Typography>No purchase orders found</Typography>
+                          </Box>
                         )}
-                        {suppliers.map(item => (
-                          <TableRow key={item.id} hover sx={{ height: 48 }}>
-                            <TableCell sx={{ ...cellSx, py: 0.5 }}>
-                              <Checkbox
-                                checked={(selectedItems as number[]).includes(item.id)}
-                                onChange={() => {
-                                  setSelectedItems(prev => {
-                                    const set = new Set(prev as number[]);
-                                    if (set.has(item.id)) set.delete(item.id);
-                                    else set.add(item.id);
-                                    return Array.from(set);
-                                  });
-                                }}
-                                inputProps={{ 'aria-label': `select ${item.name}` }}
-                              />
+
+                        {/* Products Section */}
+                        <Typography variant="subtitle1" fontWeight="bold" sx={{ mt: 4, mb: 2 }}>Products</Typography>
+                        {isSupplierDetail(selectedSupplier) && selectedSupplier.products && selectedSupplier.products.length > 0 ? (
+                          <TableContainer>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>SKU</TableCell>
+                                  <TableCell>Product Name</TableCell>
+                                  <TableCell>Brand</TableCell>
+                                  <TableCell align="right">Cost Price</TableCell>
+                                  <TableCell align="right">Selling Price</TableCell>
+                                  <TableCell>Status</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {selectedSupplier.products.map((product) => (
+                                  <TableRow key={product.id} hover>
+                                    <TableCell>{product.sku}</TableCell>
+                                    <TableCell>{product.name}</TableCell>
+                                    <TableCell>{product.brand || '-'}</TableCell>
+                                    <TableCell align="right">{formatCurrency(product.cost_price)}</TableCell>
+                                    <TableCell align="right">{formatCurrency(product.selling_price)}</TableCell>
+                                    <TableCell>
+                                      <Chip
+                                        size="small"
+                                        label={product.is_active ? 'Active' : 'Inactive'}
+                                        color={product.is_active ? 'success' : 'default'}
+                                      />
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        ) : (
+                          <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                            <Typography>No products found</Typography>
+                          </Box>
+                        )}
                             </TableCell>
 
                             {columnOrder.map(col => {
@@ -1433,6 +1066,8 @@ const Suppliers: React.FC = () => {
             </CardContent>
           </Card>
         )}
+
+
 
         {/* Add/Edit Supplier Dialog */}
         <Dialog open={supplierDialog} onClose={() => setSupplierDialog(false)} maxWidth="md" fullWidth>
@@ -1726,371 +1361,6 @@ const Suppliers: React.FC = () => {
               disabled={loading}
             >
               Delete
-            </Button>
-          </DialogActions>
-        </Dialog>
-
-        {/* Purchase Order Dialog */}
-        <Dialog 
-          open={purchaseOrderDialog} 
-          onClose={() => setPurchaseOrderDialog(false)}
-          maxWidth="md"
-          fullWidth
-        >
-          <DialogTitle>
-            Create Purchase Order - {selectedSupplier?.name}
-          </DialogTitle>
-          <DialogContent>
-            <Box sx={{ pt: 2 }}>
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <Alert severity="info" sx={{ mb: 2 }}>
-                    Purchase order number will be auto-generated
-                  </Alert>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Order Date"
-                    type="date"
-                    required
-                    InputLabelProps={{ shrink: true }}
-                    value={poOrderDate}
-                    onChange={(e) => setPoOrderDate(e.target.value)}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Expected Delivery (Optional)"
-                    type="date"
-                    InputLabelProps={{ shrink: true }}
-                    value={poExpectedDate}
-                    onChange={(e) => setPoExpectedDate(e.target.value)}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    label="Notes"
-                    multiline
-                    rows={2}
-                    value={poNotes}
-                    onChange={(e) => setPoNotes(e.target.value)}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <Divider sx={{ my: 1 }} />
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    <Typography variant="subtitle1">
-                      Order Items ({poItems.length})
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Button
-                        variant="outlined"
-                        startIcon={<WarningIcon />}
-                        size="small"
-                        onClick={async () => {
-                          try {
-                            const response = await axios.get('/api/products', {
-                              params: {
-                                supplier_id: selectedSupplier?.id,
-                                low_stock: true
-                              }
-                            });
-                            setLowStockProducts(response.data.products || response.data || []);
-                            setLowStockDialog(true);
-                          } catch (error) {
-                            console.error('Failed to fetch low stock products:', error);
-                            showNotification('Failed to fetch low stock products', 'error');
-                          }
-                        }}
-                      >
-                        Low Stock
-                      </Button>
-                      <Button
-                        variant="outlined"
-                        startIcon={<AddIcon />}
-                        size="small"
-                        onClick={async () => {
-                          try {
-                            // Fetch all products for this supplier
-                            const response = await axios.get('/api/products', {
-                              params: {
-                                supplier_id: selectedSupplier?.id,
-                                status: 'active'
-                              }
-                            });
-                            const products = response.data.products || response.data || [];
-                            if (products.length === 0) {
-                              showNotification('No products found for this supplier', 'warning');
-                              return;
-                            }
-                            setLowStockProducts(products);
-                            setLowStockDialog(true);
-                          } catch (error) {
-                            console.error('Failed to fetch products:', error);
-                            showNotification('Failed to fetch products', 'error');
-                          }
-                        }}
-                      >
-                        Add Product
-                      </Button>
-                    </Box>
-                  </Box>
-                  
-                  {poItems.length === 0 ? (
-                    <Box sx={{ mt: 2 }}>
-                      <Alert severity="info">
-                        Click "Add Item" to add products to this purchase order.
-                      </Alert>
-                    </Box>
-                  ) : (
-                    <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
-                      {poItems.map((item, index) => (
-                        <Card key={item.id} sx={{ mb: 1, p: 1 }}>
-                          <Grid container spacing={1} alignItems="center">
-                            <Grid item xs>
-                              <TextField
-                                fullWidth
-                                label="Product Name"
-                                size="small"
-                                required
-                                value={item.product_name}
-                                disabled
-                              />
-                            </Grid>
-                            <Grid item xs={1.3}>
-                              <TextField
-                                fullWidth
-                                label="Qty"
-                                type="number"
-                                size="small"
-                                required
-                                value={item.quantity}
-                                onChange={(e) => {
-                                  const newItems = [...poItems];
-                                  newItems[index].quantity = Number(e.target.value);
-                                  setPoItems(newItems);
-                                }}
-                              />
-                            </Grid>
-                            <Grid item xs={2}>
-                              <TextField
-                                fullWidth
-                                label="Unit Price"
-                                type="number"
-                                size="small"
-                                required
-                                value={item.unit_price}
-                                onFocus={(e) => {
-                                  if (item.unit_price === 0) {
-                                    e.target.select();
-                                  }
-                                }}
-                                onChange={(e) => {
-                                  const newItems = [...poItems];
-                                  newItems[index].unit_price = Number(e.target.value);
-                                  setPoItems(newItems);
-                                }}
-                              />
-                            </Grid>
-                            <Grid item xs={2}>
-                              <TextField
-                                fullWidth
-                                label="Subtotal"
-                                size="small"
-                                value={`$${(item.quantity * item.unit_price).toFixed(2)}`}
-                                disabled
-                              />
-                            </Grid>
-                            <Grid item xs="auto">
-                              <IconButton
-                                size="small"
-                                color="error"
-                                onClick={() => {
-                                  setPoItems(poItems.filter(i => i.id !== item.id));
-                                }}
-                              >
-                                <DeleteIcon />
-                              </IconButton>
-                            </Grid>
-                          </Grid>
-                        </Card>
-                      ))}
-                    </Box>
-                  )}
-                </Grid>
-              </Grid>
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', pl: 2 }}>
-              <Typography variant="h6">
-                Total: ${poItems.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0).toFixed(2)}
-              </Typography>
-            </Box>
-            <Button onClick={() => setPurchaseOrderDialog(false)}>Cancel</Button>
-            <Button 
-              variant="contained"
-              disabled={loading || poItems.length === 0}
-              onClick={handleCreatePurchaseOrder}
-            >
-              Create Purchase Order
-            </Button>
-          </DialogActions>
-        </Dialog>
-
-        {/* Products Selection Dialog */}
-        <Dialog 
-          open={lowStockDialog} 
-          onClose={() => setLowStockDialog(false)}
-          maxWidth="sm"
-          fullWidth
-        >
-          <DialogTitle>
-            Select Products from {selectedSupplier?.name}
-          </DialogTitle>
-          <DialogContent>
-            <Box sx={{ pt: 2 }}>
-              {lowStockProducts.length === 0 ? (
-                <Alert severity="info">
-                  No low stock products found for this supplier.
-                </Alert>
-              ) : (
-                <List>
-                  {lowStockProducts.map((product) => (
-                    <ListItem 
-                      key={product.id}
-                      secondaryAction={
-                        <Button
-                          variant="contained"
-                          size="small"
-                          startIcon={<AddIcon />}
-                          onClick={() => {
-                            // Check if product already exists in items
-                            const existingItem = poItems.find(item => item.product_id === product.id);
-                            if (existingItem) {
-                              showNotification('Product already added to order', 'warning');
-                              return;
-                            }
-                            
-                            setPoItems([...poItems, {
-                              id: Date.now().toString(),
-                              product_id: product.id,
-                              product_name: `${product.brand || ''} ${product.name}`.trim(),
-                              quantity: product.reorder_point || 10,
-                              unit_price: product.cost_price || 0
-                            }]);
-                            showNotification(`Added ${product.name} to order`, 'success');
-                          }}
-                        >
-                          Add
-                        </Button>
-                      }
-                    >
-                      <ListItemText
-                        primary={
-                          <Box>
-                            <Typography variant="body1">
-                              {product.brand && `${product.brand} - `}{product.name}
-                            </Typography>
-                            {product.sku && (
-                              <Typography variant="caption" color="text.secondary">
-                                SKU: {product.sku}
-                              </Typography>
-                            )}
-                          </Box>
-                        }
-                        secondary={
-                          <Box>
-                            <Typography variant="caption" display="block">
-                              Current Stock: {product.quantity || 0} {product.unit || 'pcs'}
-                            </Typography>
-                            <Typography variant="caption" display="block">
-                              Cost: {formatCurrency(product.cost_price || 0)}
-                            </Typography>
-                          </Box>
-                        }
-                      />
-                    </ListItem>
-                  ))}
-                </List>
-              )}
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setLowStockDialog(false)}>Close</Button>
-          </DialogActions>
-        </Dialog>
-
-        {/* Purchase Order Detail Dialog */}
-        <Dialog 
-          open={poDetailDialog} 
-          onClose={() => setPoDetailDialog(false)}
-          maxWidth="md"
-          fullWidth
-        >
-          <DialogTitle>
-            Purchase Order Details - {selectedPO?.order_number}
-          </DialogTitle>
-          <DialogContent>
-            <Box sx={{ pt: 2 }}>
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <Typography variant="body2" color="text.secondary">Order Date</Typography>
-                  <Typography variant="body1">{selectedPO && formatDate(selectedPO.order_date)}</Typography>
-                </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">Payment Status</Typography>
-                  <Box sx={{ mt: 0.5 }}>
-                    <Chip
-                      label={selectedPO?.payment_status}
-                      size="small"
-                      color={selectedPO ? getPaymentStatusColor(selectedPO.payment_status) : 'default'}
-                    />
-                  </Box>
-                </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">Receiving Status</Typography>
-                  <Box sx={{ mt: 0.5 }}>
-                    <Chip
-                      icon={selectedPO ? getReceivingStatusIcon(selectedPO.receiving_status) : undefined}
-                      label={selectedPO?.receiving_status}
-                      size="small"
-                      color={selectedPO ? getReceivingStatusColor(selectedPO.receiving_status) : 'default'}
-                    />
-                  </Box>
-                </Grid>
-                <Grid item xs={12}>
-                  <Typography variant="body2" color="text.secondary">Total Amount</Typography>
-                  <Typography variant="h5">{selectedPO && formatCurrency(selectedPO.total_amount)}</Typography>
-                </Grid>
-                {selectedPO?.notes && (
-                  <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">Notes</Typography>
-                    <Typography variant="body1">{selectedPO.notes}</Typography>
-                  </Grid>
-                )}
-                <Grid item xs={12}>
-                  <Divider sx={{ my: 2 }} />
-                  <Typography variant="h6" gutterBottom>Order Items</Typography>
-                  <Alert severity="info">
-                    Item details will be loaded from the database. Currently showing: {selectedPO?.items_summary}
-                  </Alert>
-                  {/* TODO: Fetch and display actual items from backend */}
-                </Grid>
-              </Grid>
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setPoDetailDialog(false)}>Close</Button>
-            <Button 
-              variant="outlined"
-              startIcon={<EditIcon />}
-              disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
-            >
-              Edit Order
             </Button>
           </DialogActions>
         </Dialog>

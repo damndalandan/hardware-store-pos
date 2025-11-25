@@ -16,6 +16,7 @@ export interface CartItem {
   color?: string;
   variety?: string;
   current_stock: number;
+  discount_percent?: number;
 }
 
 export interface Payment {
@@ -69,6 +70,7 @@ interface CashierPOSContextType {
   cart: CartItem[];
   addToCart: (product: any) => void;
   updateCartItem: (id: number, quantity: number) => void;
+  updateCartItemDiscount: (id: number, discountPercent: number) => void;
   removeFromCart: (id: number) => void;
   clearCart: () => void;
   
@@ -84,8 +86,11 @@ interface CashierPOSContextType {
   voidTransaction: (saleId: number, reason: string) => Promise<boolean>;
   
   // Payment & Calculations
-  calculateTotals: () => { subtotal: number; tax: number; total: number };
+  calculateTotals: () => { subtotal: number; tax: number; total: number; discount: number; ewt: number };
   taxRate: number;
+  taxMode: 'VAT' | 'NON-VAT' | 'EWT';
+  setTaxMode: (mode: 'VAT' | 'NON-VAT' | 'EWT') => void;
+  discountPercent: number;
   
   // Product Search & Barcode
   searchProducts: (term: string) => Promise<any[]>;
@@ -142,7 +147,10 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
   const [offlineSales, setOfflineSales] = useState<Sale[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [taxRate] = useState(0.08); // 8% tax rate
+  const [taxRate] = useState(0.12); // 12% VAT rate
+  const [taxMode, setTaxMode] = useState<'VAT' | 'NON-VAT' | 'EWT'>('VAT');
+  const [discountPercent, setDiscountPercent] = useState(10); // Default 10%
+  const [ewtRate] = useState(0.01); // 1% EWT rate
 
   // Helper to include Authorization header when token is present
   const getAuthHeaders = () => {
@@ -157,7 +165,23 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
     loadOfflineData();
     loadCurrentShift();
     loadTodaysSales();
+    loadSettings();
   }, []);
+
+  const loadSettings = async () => {
+    try {
+      const response = await fetch('/api/settings', { headers: getAuthHeaders() });
+      if (response.ok) {
+        const data = await response.json();
+        const discountSetting = data.settings?.pos?.default_discount_percent?.value;
+        if (discountSetting) {
+          setDiscountPercent(Number(discountSetting));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+    }
+  };
 
   // Persist cart per-user: use a user-scoped key so different users do not share the same cart
   useEffect(() => {
@@ -287,6 +311,12 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
     ));
   };
 
+  const updateCartItemDiscount = (id: number, discountPercent: number) => {
+    setCart(cart.map(item =>
+      item.id === id ? { ...item, discount_percent: discountPercent } : item
+    ));
+  };
+
   const removeFromCart = (id: number) => {
     setCart(cart.filter(item => item.id !== id));
   };
@@ -305,19 +335,62 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
 
   // Calculations
   const calculateTotals = () => {
-    // Price already includes 12% VAT
-    // Formula: price = lessVat * 1.12
-    // Therefore: lessVat = price / 1.12, vat = lessVat * 0.12
-    const totalWithVat = cart.reduce((total, item) => total + (item.price * item.quantity), 0);
-    const vatDivisor = 1 + taxRate; // 1.12 for 12% VAT
-    const vatableSale = totalWithVat / vatDivisor; // Less VAT (amount before VAT)
-    const vat = vatableSale * taxRate; // VAT amount (12% of vatable sale)
+    // Calculate total with discounts applied per item
+    let totalBeforeDiscount = 0;
+    let totalDiscount = 0;
     
-    return {
-      subtotal: vatableSale,  // VATABLE SALE (Less VAT) - for BIR
-      tax: vat,               // VAT (12%)
-      total: totalWithVat     // Total amount (already includes VAT)
-    };
+    cart.forEach(item => {
+      const itemTotal = item.price * item.quantity;
+      const itemDiscount = itemTotal * ((item.discount_percent || 0) / 100);
+      totalBeforeDiscount += itemTotal;
+      totalDiscount += itemDiscount;
+    });
+    
+    const totalAfterDiscount = totalBeforeDiscount - totalDiscount;
+    
+    if (taxMode === 'NON-VAT') {
+      // NON-VAT: No tax calculation, simple total
+      return {
+        subtotal: totalAfterDiscount,
+        tax: 0,
+        total: totalAfterDiscount,
+        discount: totalDiscount,
+        ewt: 0
+      };
+    } else if (taxMode === 'EWT') {
+      // EWT (Expanded Withholding Tax): 
+      // Price includes 12% VAT, extract vatable sale and VAT
+      // Then deduct 1% EWT from the total
+      const vatDivisor = 1 + taxRate; // 1.12 for 12% VAT
+      const vatableSale = totalAfterDiscount / vatDivisor;
+      const vat = vatableSale * taxRate;
+      const ewtAmount = totalAfterDiscount * ewtRate; // 1% of total
+      const totalWithEWT = totalAfterDiscount - ewtAmount;
+      
+      return {
+        subtotal: vatableSale,
+        tax: vat,
+        total: totalWithEWT,
+        discount: totalDiscount,
+        ewt: ewtAmount
+      };
+    } else {
+      // VAT Mode (default):
+      // Price already includes 12% VAT
+      // Formula: price = lessVat * 1.12
+      // Therefore: lessVat = price / 1.12, vat = lessVat * 0.12
+      const vatDivisor = 1 + taxRate; // 1.12 for 12% VAT
+      const vatableSale = totalAfterDiscount / vatDivisor; // Less VAT (amount before VAT)
+      const vat = vatableSale * taxRate; // VAT amount (12% of vatable sale)
+      
+      return {
+        subtotal: vatableSale,  // VATABLE SALE (Less VAT) - for BIR
+        tax: vat,               // VAT (12%)
+        total: totalAfterDiscount,  // Total amount (already includes VAT)
+        discount: totalDiscount,
+        ewt: 0
+      };
+    }
   };
 
   // Product Search
@@ -383,15 +456,19 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
     setError(null);
 
     try {
-      const { subtotal, tax, total } = calculateTotals();
+      const { subtotal, tax, total, discount, ewt } = calculateTotals();
 
       const saleData = {
-        items: cart.map(item => ({
-          product_id: item.id,
-          quantity: item.quantity,
-          unit_price: item.price,
-          discount: 0,
-        })),
+        items: cart.map(item => {
+          const itemSubtotal = item.price * item.quantity;
+          const itemDiscount = itemSubtotal * ((item.discount_percent || 0) / 100);
+          return {
+            product_id: item.id,
+            quantity: item.quantity,
+            unit_price: item.price,
+            discount: itemDiscount,
+          };
+        }),
         paymentSplits: paymentData.paymentSplits.map(split => ({
           payment_method_code: split.payment_method_code,
           amount: split.amount,
@@ -891,6 +968,7 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
     cart,
     addToCart,
     updateCartItem,
+    updateCartItemDiscount,
     removeFromCart,
     clearCart,
     
@@ -904,6 +982,9 @@ export const CashierPOSProvider: React.FC<CashierPOSProviderProps> = ({ children
     // Payment & Calculations
     calculateTotals,
     taxRate,
+    taxMode,
+    setTaxMode,
+    discountPercent,
     
     // Product Search
     searchProducts,

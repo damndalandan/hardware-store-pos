@@ -76,6 +76,8 @@ export const createSettingsTables = async (pool: any) => {
     ('tax', 'vat_inclusive', 'true', 'boolean', 'Prices include VAT (VAT-inclusive pricing)'),
     ('tax', 'show_vat_breakdown', 'true', 'boolean', 'Show VAT breakdown on receipts (VATABLE SALE + VAT)'),
     ('tax', 'vat_registered', 'true', 'boolean', 'Business is VAT-registered (BIR compliance)'),
+    ('tax', 'ewt_rate', '0.01', 'number', 'Expanded Withholding Tax rate (1%)'),
+    ('pos', 'default_discount_percent', '10', 'number', 'Default discount percentage'),
     ('receipt', 'print_automatically', 'false', 'boolean', 'Auto-print receipts after sale'),
     ('receipt', 'email_receipts', 'true', 'boolean', 'Enable email receipts'),
     ('inventory', 'auto_reorder', 'false', 'boolean', 'Enable automatic reordering'),

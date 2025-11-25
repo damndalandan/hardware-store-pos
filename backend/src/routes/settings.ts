@@ -16,8 +16,8 @@ const requireRole = (roles: string[]) => {
   };
 };
 
-// Get all system settings
-router.get('/', requireRole(['admin', 'manager']), asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+// Get all system settings (accessible by all authenticated users for reading POS settings)
+router.get('/', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const pool = await getPool();
   
   const [rows] = await pool.execute(`

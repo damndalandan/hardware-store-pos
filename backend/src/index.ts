@@ -11,7 +11,6 @@ import dotenv from 'dotenv';
 // Import routes
 import authRoutes from './routes/auth';
 import productRoutes from './routes/products';
-import productImportRoutes from './routes/productImport';
 import inventoryRoutes from './routes/inventory';
 import salesRoutes from './routes/sales';
 import supplierRoutes from './routes/suppliers';
@@ -81,7 +80,6 @@ app.get('/health', (req, res) => {
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/products', authenticateToken, productRoutes);
-app.use('/api/products', authenticateToken, productImportRoutes); // Product import routes
 app.use('/api/inventory', authenticateToken, inventoryRoutes);
 app.use('/api/sales', authenticateToken, salesRoutes);
 app.use('/api/suppliers', authenticateToken, supplierRoutes);

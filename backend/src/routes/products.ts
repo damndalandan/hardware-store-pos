@@ -25,7 +25,7 @@ const productSchema = joi.object({
   size: joi.string().allow('', null).max(50),
   variety: joi.string().allow('', null).max(100),
   color: joi.string().allow('', null).max(50),
-  unit: joi.string().allow('', null).max(20),
+  unit: joi.string().allow('', null).max(20).default('each'),
   costPrice: joi.number().positive().precision(2).required(),
   sellingPrice: joi.number().positive().precision(2).required(),
   minStockLevel: joi.number().integer().min(0).default(0),
@@ -989,7 +989,7 @@ router.post('/import', requireRole(['admin', 'manager']), upload.single('file'),
           size: row.Size || row.size ? String(row.Size || row.size) : null,
           variety: row.Variety || row.variety ? String(row.Variety || row.variety) : null,
           color: row.Color || row.color ? String(row.Color || row.color) : null,
-          unit: row.Unit || row.unit ? String(row.Unit || row.unit) : null,
+          unit: row.Unit || row.unit ? String(row.Unit || row.unit) : 'each', // Default to 'each' if not provided
           costPrice: parseFloat(row.Cost_Price || row['Cost Price'] || row.costPrice || '0'),
           sellingPrice: parseFloat(row.Selling_Price || row['Selling Price'] || row.sellingPrice || '0'),
           minStockLevel: parseInt(row.Min_Stock_Level || row['Min Stock'] || row.minStockLevel || '0'),
@@ -1185,7 +1185,7 @@ router.post('/import', requireRole(['admin', 'manager']), upload.single('file'),
             product.supplierId = supplierMap.get(supplierKey);
           }
 
-          // Insert product
+          // Insert product (ensure unit has a default value)
           const [result]: any = await connection.execute(`
             INSERT INTO products (
               sku, barcode, name, brand, description, category_id, size, variety, color, unit,
@@ -1194,7 +1194,7 @@ router.post('/import', requireRole(['admin', 'manager']), upload.single('file'),
           `, [
             product.sku, product.barcode || null, product.name, product.brand || null,
             product.description || null, product.categoryId || null, product.size || null,
-            product.variety || null, product.color || null, product.unit || null,
+            product.variety || null, product.color || null, product.unit || 'each',
             product.costPrice, product.sellingPrice, product.minStockLevel,
             product.maxStockLevel, product.supplierId || null
           ]);

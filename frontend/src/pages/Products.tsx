@@ -179,12 +179,10 @@ const Products: React.FC = () => {
     return () => clearTimeout(timer);
   }, [filterBrand]);
 
-  // Fetch data
   const fetchProducts = async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      // Add limit to improve initial load performance
       params.append('limit', '1000');
       if (debouncedSearchTerm) params.append('search', debouncedSearchTerm);
       if (filterCategory) params.append('category', filterCategory);
@@ -194,7 +192,6 @@ const Products: React.FC = () => {
       const response = await axios.get(`${API_BASE_URL}/products?${params}`);
       console.log('Products response:', response.data);
       
-      // Backend returns { products: [...], pagination: {...} }
       const responseData = response.data;
       if (responseData && responseData.products && Array.isArray(responseData.products)) {
         safeSetProducts(responseData.products);
@@ -211,14 +208,12 @@ const Products: React.FC = () => {
       // Ensure we don't break the component on errors
       safeSetProducts([]);
       
-      // Check for component crash
       if (error.name === 'ChunkLoadError' || error.message?.includes('Loading chunk')) {
         window.location.reload();
         return;
       }
       showNotification('Failed to load products', 'error');
     } finally {
-      // Always clear loading when finished so UI buttons (like Create) aren't stuck disabled
       setLoading(false);
     }
   };
@@ -1204,7 +1199,8 @@ const Products: React.FC = () => {
       sx={{
         p: 3,
         backgroundColor: '#f7f8fA',
-        minHeight: '100vh',
+        height: '100vh',
+        overflow: 'hidden',
         '&, & *': {
           fontSize: '14px !important'
         },
@@ -1243,8 +1239,8 @@ const Products: React.FC = () => {
 
       {/* Toolbar (show only on Product subpage) */}
       {productSubPage === 'product' && (
-        <Card sx={{ mb: 3, backgroundColor: '#fff', borderRadius: 2, boxShadow: 1 }}>
-          <CardContent sx={{ p: 2 }}>
+        <Card sx={{ mb: 2, backgroundColor: '#fff', borderRadius: 2, boxShadow: 1 }}>
+          <CardContent sx={{ p: 1.5, pb: '12px !important', display: 'flex', alignItems: 'center' }}>
           <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} md={4}>
               <TextField
@@ -1347,7 +1343,7 @@ const Products: React.FC = () => {
           >
             {/* Inner scrolling area to keep rounded corners on the container */}
             <Box sx={{
-              maxHeight: 600,
+              maxHeight: 538,
               overflow: 'auto',
               // custom scrollbar styling: ultra-thin and remove native buttons/triangle
               '&::-webkit-scrollbar': {
@@ -1510,15 +1506,15 @@ const Products: React.FC = () => {
                             <Typography noWrap>{item.current_stock}</Typography>
                           </Box>
                         </TableCell>
-                        <TableCell sx={{ position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1400, WebkitBackgroundClip: 'padding-box', backgroundClip: 'padding-box', boxShadow: '-6px 0 12px rgba(0,0,0,0.04)', borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap', pointerEvents: 'auto', pr: 0, py: 0.5, '& .MuiIconButton-root': { height: 32, width: 32, p: 0 } }}>
+                        <TableCell sx={{ position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1200, WebkitBackgroundClip: 'padding-box', backgroundClip: 'padding-box', boxShadow: '-6px 0 12px rgba(0,0,0,0.04)', borderLeft: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap', pointerEvents: 'auto', pr: 0, py: 0.5, '& .MuiIconButton-root': { height: 32, width: 32, p: 0 } }}>
                           <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', justifyContent: 'center', height: 40, minHeight: 40 }}>
                             <Tooltip title="Edit Product">
-                              <IconButton size="small" onClick={() => { setEditingProduct(item); setProductDialog(true); }} disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}>
+                              <IconButton size="small" onClick={() => { setEditingProduct(item); setProductDialog(true); }} disabled={!user || (user.role !== 'admin' && user.role !== 'manager') || productDialog}>
                                 <EditIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
                             <Tooltip title="Delete Product">
-                              <IconButton size="small" onClick={() => handleDeleteProduct(item.id)} disabled={!user || user.role !== 'admin'} color="error">
+                              <IconButton size="small" onClick={() => handleDeleteProduct(item.id)} disabled={!user || user.role !== 'admin' || productDialog} color="error">
                                 <DeleteIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>

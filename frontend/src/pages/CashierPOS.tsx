@@ -73,6 +73,7 @@ const POS: React.FC = () => {
     cart,
     addToCart,
     updateCartItem,
+    updateCartItemDiscount,
     removeFromCart,
     clearCart,
     calculateTotals,
@@ -86,7 +87,10 @@ const POS: React.FC = () => {
     error,
     clearError,
     offlineSales,
-    syncOfflineSales
+    syncOfflineSales,
+    taxMode,
+    setTaxMode,
+    discountPercent
   } = useCashierPOS();
 
   // Local state
@@ -102,7 +106,7 @@ const POS: React.FC = () => {
   const [customers, setCustomers] = useState<any[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [notifications, setNotifications] = useState<string[]>([]);
-  const [compactView, setCompactView] = useState(false);
+  const [discountMode, setDiscountMode] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-focus search input
@@ -310,8 +314,16 @@ const POS: React.FC = () => {
         const grouped = groupProductsByVariants(results);
         setGroupedResults(grouped);
         
-        // Clear any previous selections - no pre-selection
-        setSelectedVariants({});
+        // Auto-select first variant for each product group
+        const preselectedVariants: { [key: number]: any } = {};
+        grouped.forEach((group, index) => {
+          if (group.variants.length > 0) {
+            // Select the first variant with stock if available, otherwise just the first variant
+            const variantWithStock = group.variants.find((v: any) => v.current_stock > 0);
+            preselectedVariants[index] = variantWithStock || group.variants[0];
+          }
+        });
+        setSelectedVariants(preselectedVariants);
       } catch (err) {
         console.error('Live search failed', err);
         setSearchResults([]);
@@ -381,10 +393,10 @@ const POS: React.FC = () => {
     addNotification('Sale completed successfully!');
   };
 
-  const { subtotal, tax, total } = calculateTotals();
+  const { subtotal, tax, total, discount, ewt } = calculateTotals();
 
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', p: 3 }}>
+    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', p: 3, pb: 0 }}>
       {/* Header */}
       <Paper elevation={1} sx={{ p: 2, mb: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -445,24 +457,15 @@ const POS: React.FC = () => {
               </Button>
             )}
             
-            {/* View toggle */}
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => setCompactView(!compactView)}
-              startIcon={compactView ? <KeyboardArrowDown /> : <KeyboardArrowUp />}
-            >
-              {compactView ? 'Expand' : 'Compact'}
-            </Button>
           </Box>
         </Box>
       </Paper>
 
   <Grid container spacing={3} sx={{ flex: 1, overflow: 'hidden' }}>
         {/* Left Side - Product Search */}
-        <Grid item xs={12} md={compactView ? 12 : 7} sx={{ display: 'flex', flexDirection: 'column' }}>
+        <Grid item xs={12} md={7} sx={{ display: 'flex', flexDirection: 'column' }}>
           <Card sx={{ mb: 2 }}>
-            <CardContent sx={{ pb: 2 }}>
+            <CardContent sx={{ pb: '16px !important' }}>
               <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
                 <TextField
                   fullWidth
@@ -513,8 +516,8 @@ const POS: React.FC = () => {
 
               {/* Search Results Dropdown - Positioned Below Shortcuts */}
               {groupedResults.length > 0 && (
-                <Box sx={{ mb: 2 }}>
-                  <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: compactView ? 300 : 500 }}>
+                <Box>
+                  <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: '560px', overflow: 'auto' }}>
                     <Table size="small" stickyHeader>
                       <TableHead>
                         <TableRow>
@@ -543,82 +546,87 @@ const POS: React.FC = () => {
                             <TableRow key={groupIndex} hover>
                               <TableCell>
                                 <Box>
-                                  <Typography variant="body2" fontWeight="medium">
-                                    {group.baseProduct.name}
-                                  </Typography>
-                                  <Typography variant="caption" color="textSecondary">
+                                  {/* Top line: Product name + variant chips */}
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                    <Typography variant="body2" fontWeight="medium">
+                                      {group.baseProduct.name}
+                                    </Typography>
+                                    
+                                    {/* Variant Selectors - Inline */}
+                                    {hasVariants && (
+                                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        {/* Size variants */}
+                                        {group.hasSizeVariants && (
+                                          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                                            {group.variants
+                                              .filter((v: any, i: number, arr: any[]) => 
+                                                arr.findIndex((x: any) => (x.effectiveSize || x.size) === (v.effectiveSize || v.size)) === i
+                                              )
+                                              .map((variant: any) => (
+                                                <Chip
+                                                  key={variant.id}
+                                                  label={variant.effectiveSize || variant.size || 'N/A'}
+                                                  size="small"
+                                                  onClick={() => handleVariantSelect(variant)}
+                                                  color={selectedVariant?.id === variant.id ? 'primary' : 'default'}
+                                                  sx={{ cursor: 'pointer', fontSize: '0.7rem', height: '22px' }}
+                                                />
+                                              ))
+                                            }
+                                          </Box>
+                                        )}
+                                        
+                                        {/* Variety variants (e.g., paint finishes, product types) */}
+                                        {group.hasVarietyVariants && (
+                                          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                                            {group.variants
+                                              .filter((v: any, i: number, arr: any[]) => 
+                                                arr.findIndex((x: any) => x.variety === v.variety) === i
+                                              )
+                                              .map((variant: any) => (
+                                                <Chip
+                                                  key={variant.id}
+                                                  label={variant.variety || 'N/A'}
+                                                  size="small"
+                                                  onClick={() => handleVariantSelect(variant)}
+                                                  color={selectedVariant?.id === variant.id ? 'success' : 'default'}
+                                                  sx={{ cursor: 'pointer', fontSize: '0.7rem', height: '22px' }}
+                                                />
+                                              ))
+                                            }
+                                          </Box>
+                                        )}
+                                        
+                                        {/* Color variants */}
+                                        {group.hasColorVariants && (
+                                          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                                            {group.variants
+                                              .filter((v: any, i: number, arr: any[]) => 
+                                                arr.findIndex((x: any) => (x.effectiveColor || x.color) === (v.effectiveColor || v.color)) === i
+                                              )
+                                              .map((variant: any) => (
+                                                <Chip
+                                                  key={variant.id}
+                                                  label={variant.effectiveColor || variant.color || 'N/A'}
+                                                  size="small"
+                                                  onClick={() => handleVariantSelect(variant)}
+                                                  color={selectedVariant?.id === variant.id ? 'secondary' : 'default'}
+                                                  sx={{ cursor: 'pointer', fontSize: '0.7rem', height: '22px' }}
+                                                />
+                                              ))
+                                            }
+                                          </Box>
+                                        )}
+                                      </Box>
+                                    )}
+                                  </Box>
+                                  
+                                  {/* Bottom line: Always present for consistent spacing */}
+                                  <Typography variant="caption" color="textSecondary" sx={{ display: 'block', minHeight: '1.2em' }}>
                                     {group.baseProduct.brand && `${group.baseProduct.brand} \u2022 `}
-                                    {group.baseProduct.category}
+                                    {group.baseProduct.category || '\u00A0'}
                                     {group.baseProduct.variety && ` \u2022 ${group.baseProduct.variety}`}
                                   </Typography>
-                                  
-                                  {/* Variant Selectors */}
-                                  {hasVariants && (
-                                    <Box sx={{ mt: 1, display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                                      {/* Size variants */}
-                                      {group.hasSizeVariants && (
-                                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                                          {group.variants
-                                            .filter((v: any, i: number, arr: any[]) => 
-                                              arr.findIndex((x: any) => (x.effectiveSize || x.size) === (v.effectiveSize || v.size)) === i
-                                            )
-                                            .map((variant: any) => (
-                                              <Chip
-                                                key={variant.id}
-                                                label={variant.effectiveSize || variant.size || 'N/A'}
-                                                size="small"
-                                                onClick={() => handleVariantSelect(variant)}
-                                                color={selectedVariant?.id === variant.id ? 'primary' : 'default'}
-                                                sx={{ cursor: 'pointer', fontSize: '0.7rem' }}
-                                              />
-                                            ))
-                                          }
-                                        </Box>
-                                      )}
-                                      
-                                      {/* Variety variants (e.g., paint finishes, product types) */}
-                                      {group.hasVarietyVariants && (
-                                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                                          {group.variants
-                                            .filter((v: any, i: number, arr: any[]) => 
-                                              arr.findIndex((x: any) => x.variety === v.variety) === i
-                                            )
-                                            .map((variant: any) => (
-                                              <Chip
-                                                key={variant.id}
-                                                label={variant.variety || 'N/A'}
-                                                size="small"
-                                                onClick={() => handleVariantSelect(variant)}
-                                                color={selectedVariant?.id === variant.id ? 'success' : 'default'}
-                                                sx={{ cursor: 'pointer', fontSize: '0.7rem' }}
-                                              />
-                                            ))
-                                          }
-                                        </Box>
-                                      )}
-                                      
-                                      {/* Color variants */}
-                                      {group.hasColorVariants && (
-                                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                                          {group.variants
-                                            .filter((v: any, i: number, arr: any[]) => 
-                                              arr.findIndex((x: any) => (x.effectiveColor || x.color) === (v.effectiveColor || v.color)) === i
-                                            )
-                                            .map((variant: any) => (
-                                              <Chip
-                                                key={variant.id}
-                                                label={variant.effectiveColor || variant.color || 'N/A'}
-                                                size="small"
-                                                onClick={() => handleVariantSelect(variant)}
-                                                color={selectedVariant?.id === variant.id ? 'secondary' : 'default'}
-                                                sx={{ cursor: 'pointer', fontSize: '0.7rem' }}
-                                              />
-                                            ))
-                                          }
-                                        </Box>
-                                      )}
-                                    </Box>
-                                  )}
                                 </Box>
                               </TableCell>
                               <TableCell align="right">
@@ -664,11 +672,10 @@ const POS: React.FC = () => {
         </Grid>
 
         {/* Right Side - Shopping Cart */}
-        {(!compactView || cart.length > 0) && (
-          <Grid item xs={12} md={5} sx={{ display: 'flex', flexDirection: 'column' }}>
-            <Card sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-              <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+        <Grid item xs={12} md={5} sx={{ display: 'flex', flexDirection: 'column', height: 'calc(113vh - 200px)' }}>
+          <Card sx={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 2, height: '100%' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
                   <Typography variant="h6">
                     <Badge badgeContent={cart.length} color="primary">
                       <ShoppingCart />
@@ -676,14 +683,44 @@ const POS: React.FC = () => {
                     <span style={{ marginLeft: 8 }}>Cart</span>
                   </Typography>
                   {cart.length > 0 && (
-                    <Button
-                      size="small"
-                      onClick={clearCart}
-                      startIcon={<Clear />}
-                      color="error"
-                    >
-                      Clear All
-                    </Button>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button
+                        size="small"
+                        variant={discountMode ? "contained" : "outlined"}
+                        onClick={() => setDiscountMode(!discountMode)}
+                        color="secondary"
+                      >
+                        Discount
+                      </Button>
+                      <ButtonGroup size="small">
+                        <Button
+                          variant={taxMode === 'VAT' ? "contained" : "outlined"}
+                          onClick={() => setTaxMode('VAT')}
+                        >
+                          VAT
+                        </Button>
+                        <Button
+                          variant={taxMode === 'NON-VAT' ? "contained" : "outlined"}
+                          onClick={() => setTaxMode('NON-VAT')}
+                        >
+                          NON-VAT
+                        </Button>
+                        <Button
+                          variant={taxMode === 'EWT' ? "contained" : "outlined"}
+                          onClick={() => setTaxMode('EWT')}
+                        >
+                          EWT
+                        </Button>
+                      </ButtonGroup>
+                      <Button
+                        size="small"
+                        onClick={clearCart}
+                        startIcon={<Clear />}
+                        color="error"
+                      >
+                        Clear All
+                      </Button>
+                    </Box>
                   )}
                 </Box>
                 
@@ -694,104 +731,175 @@ const POS: React.FC = () => {
                     alignItems: 'center', 
                     justifyContent: 'center',
                     textAlign: 'center',
-                    color: 'text.secondary'
+                    color: 'text.secondary',
+                    minHeight: 0
                   }}>
                     <Box>
-                      <ShoppingCart sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
+                      <ShoppingCart sx={{ fontSize: 48, mb: 0, opacity: 0.5 }} />
                       <Typography variant="body1">Cart is empty</Typography>
                       <Typography variant="body2">Search and add products to start</Typography>
                     </Box>
                   </Box>
                 ) : (
                   <>
-                    <List dense sx={{ flex: 1, overflow: 'auto', mb: 2 }}>
-                      {cart.map((item) => (
-                        <ListItem 
-                          key={item.id} 
-                          divider
-                          sx={{ 
-                            px: 1,
-                            '&:hover': { 
-                              backgroundColor: alpha(theme.palette.primary.main, 0.04) 
-                            }
-                          }}
-                        >
-                          <ListItemText
-                            primary={
-                              <Typography variant="body2" fontWeight="medium">
-                                {item.name}
-                                {item.size && ` ${item.size}`}
-                                {item.color && ` ${item.color}`}
-                              </Typography>
-                            }
-                            secondary={
-                              <Box>
-                                <Typography variant="caption" color="textSecondary">
-                                  {item.brand && `${item.brand} \u2022 `}
-                                  ${Number(item.price).toFixed(2)}/{item.unit}
-                                  {item.variety && ` \u2022 ${item.variety}`}
+                    <Box sx={{ flex: 1, overflow: 'auto', }}>
+                      <List dense sx={{ pt: 0 }}>
+                        {cart.map((item) => {
+                        const itemSubtotal = Number(item.price) * item.quantity;
+                        const itemDiscount = itemSubtotal * ((item.discount_percent || 0) / 100);
+                        const itemTotal = itemSubtotal - itemDiscount;
+                        
+                        return (
+                          <ListItem 
+                            key={item.id} 
+                            divider
+                            sx={{ 
+                              px: 1,
+                              alignItems: 'stretch',
+                              '&:hover': { 
+                                backgroundColor: alpha(theme.palette.primary.main, 0.04) 
+                              }
+                            }}
+                          >
+                            <Box sx={{ display: 'flex', width: '100%' }}>
+                              <ListItemText
+                                primary={
+                                  <Typography variant="body2" fontWeight="medium">
+                                    {item.name}
+                                    {item.size && ` ${item.size}`}
+                                    {item.color && ` ${item.color}`}
+                                  </Typography>
+                                }
+                                secondary={
+                                  <Box>
+                                    <Typography variant="caption" color="textSecondary">
+                                      {item.brand && `${item.brand} \u2022 `}
+                                      ₱{Number(item.price).toFixed(2)}/{item.unit}
+                                      {item.variety && ` \u2022 ${item.variety}`}
+                                    </Typography>
+                                    <br />
+                                    {item.discount_percent && item.discount_percent > 0 ? (
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Typography variant="body2" fontWeight="medium" color="primary">
+                                          ₱{itemTotal.toFixed(2)}
+                                        </Typography>
+                                        <Typography variant="caption" color="textSecondary" sx={{ textDecoration: 'line-through' }}>
+                                          ₱{itemSubtotal.toFixed(2)}
+                                        </Typography>
+                                        <Typography variant="body2" fontWeight="medium" color="error" component="span">
+                                          -{item.discount_percent}%
+                                        </Typography>
+                                      </Box>
+                                    ) : (
+                                      <Typography variant="body2" fontWeight="medium" color="primary">
+                                        ₱{itemSubtotal.toFixed(2)}
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                }
+                              />
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 'auto' }}>
+                                {/* Discount Controls - Only visible in discount mode */}
+                                {discountMode && (
+                                  <Button
+                                    size="small"
+                                    variant={item.discount_percent === discountPercent ? "contained" : "outlined"}
+                                    onClick={() => {
+                                      // Toggle discount: remove if already applied, apply if not
+                                      const newDiscount = item.discount_percent === discountPercent ? 0 : discountPercent;
+                                      updateCartItemDiscount(item.id, newDiscount);
+                                    }}
+                                    color="secondary"
+                                    sx={{ minWidth: 60, mr: 0.5 }}
+                                  >
+                                    {discountPercent}%
+                                  </Button>
+                                )}
+                                <IconButton
+                                  size="small"
+                                  onClick={() => updateCartItem(item.id, item.quantity - 1)}
+                                >
+                                  <Remove />
+                                </IconButton>
+                                <Typography 
+                                  sx={{ 
+                                    minWidth: 35, 
+                                    textAlign: 'center',
+                                    fontWeight: 'bold',
+                                    fontSize: '0.9rem',
+                                    bgcolor: 'primary.main',
+                                    color: 'primary.contrastText',
+                                    borderRadius: 1,
+                                    px: 1
+                                  }}
+                                >
+                                  {item.quantity}
                                 </Typography>
-                                <br />
-                                <Typography variant="body2" fontWeight="medium" color="primary">
-                                  ${(Number(item.price) * item.quantity).toFixed(2)}
-                                </Typography>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => updateCartItem(item.id, item.quantity + 1)}
+                                >
+                                  <Add />
+                                </IconButton>
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => removeFromCart(item.id)}
+                                >
+                                  <Delete />
+                                </IconButton>
                               </Box>
-                            }
-                          />
-                          <ListItemSecondaryAction>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <IconButton
-                                size="small"
-                                onClick={() => updateCartItem(item.id, item.quantity - 1)}
-                              >
-                                <Remove />
-                              </IconButton>
-                              <Typography 
-                                sx={{ 
-                                  minWidth: 35, 
-                                  textAlign: 'center',
-                                  fontWeight: 'bold',
-                                  fontSize: '0.9rem',
-                                  bgcolor: 'primary.main',
-                                  color: 'primary.contrastText',
-                                  borderRadius: 1,
-                                  px: 1
-                                }}
-                              >
-                                {item.quantity}
-                              </Typography>
-                              <IconButton
-                                size="small"
-                                onClick={() => updateCartItem(item.id, item.quantity + 1)}
-                              >
-                                <Add />
-                              </IconButton>
-                              <IconButton
-                                size="small"
-                                color="error"
-                                onClick={() => removeFromCart(item.id)}
-                              >
-                                <Delete />
-                              </IconButton>
                             </Box>
-                          </ListItemSecondaryAction>
-                        </ListItem>
-                      ))}
-                    </List>
+                          </ListItem>
+                        );
+                      })}
+                      </List>
+                    </Box>
 
-                    {/* Totals */}
-                    <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 2 }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                        <Typography variant="body2" color="text.secondary">VATABLE SALE (Less VAT):</Typography>
-                        <Typography>₱{subtotal.toFixed(2)}</Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                        <Typography variant="body2" color="text.secondary">VAT (12%):</Typography>
-                        <Typography>₱{tax.toFixed(2)}</Typography>
-                      </Box>
+                    {/* Totals - Fixed at bottom */}
+                    <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 2, flexShrink: 0 }}>
+                      {taxMode === 'NON-VAT' ? (
+                        <>
+                          {discount > 0 && (
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                              <Typography variant="body2" color="error">Discount:</Typography>
+                              <Typography color="error">-₱{discount.toFixed(2)}</Typography>
+                            </Box>
+                          )}
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                            <Typography variant="body2" color="text.secondary">NON-VAT Sale:</Typography>
+                            <Typography>₱{subtotal.toFixed(2)}</Typography>
+                          </Box>
+                        </>
+                      ) : (
+                        <>
+                          {discount > 0 && (
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                              <Typography variant="body2" color="error">Discount:</Typography>
+                              <Typography color="error">-₱{discount.toFixed(2)}</Typography>
+                            </Box>
+                          )}
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                            <Typography variant="body2" color="text.secondary">VATABLE SALE (Less VAT):</Typography>
+                            <Typography>₱{subtotal.toFixed(2)}</Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                            <Typography variant="body2" color="text.secondary">VAT (12%):</Typography>
+                            <Typography>₱{tax.toFixed(2)}</Typography>
+                          </Box>
+                          {taxMode === 'EWT' && ewt > 0 && (
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                              <Typography variant="body2" color="warning.main">Less: EWT (1%):</Typography>
+                              <Typography color="warning.main">-₱{ewt.toFixed(2)}</Typography>
+                            </Box>
+                          )}
+                        </>
+                      )}
                       <Divider sx={{ my: 1 }} />
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                        <Typography variant="h6" fontWeight="bold">TOTAL AMOUNT DUE:</Typography>
+                        <Typography variant="h6" fontWeight="bold">
+                          {taxMode === 'EWT' ? 'NET AMOUNT DUE:' : 'TOTAL AMOUNT DUE:'}
+                        </Typography>
                         <Typography variant="h6" fontWeight="bold" color="primary">
                           ₱{total.toFixed(2)}
                         </Typography>
@@ -842,17 +950,17 @@ const POS: React.FC = () => {
                       <Button
                         fullWidth
                         variant="contained"
-                        size="large"
+                        size="medium"
                         onClick={handleCheckout}
                         disabled={isProcessing || !currentShift}
-                        startIcon={isProcessing ? <CircularProgress size={20} /> : <Payment />}
+                        startIcon={isProcessing ? <CircularProgress size={18} /> : <Payment />}
                         sx={{ 
-                          height: 56, 
-                          fontSize: '1.1rem', 
+                          height: 42, 
+                          fontSize: '0.95rem', 
                           fontWeight: 'bold',
                           background: currentShift ? 
                             'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)' : 
-                            undefined
+                            undefined,
                         }}
                       >
                         {isProcessing ? 'Processing...' : 
@@ -864,33 +972,8 @@ const POS: React.FC = () => {
                 )}
               </CardContent>
             </Card>
-          </Grid>
-        )}
+        </Grid>
       </Grid>
-
-      {/* Floating Cart for Compact View */}
-      {compactView && cart.length > 0 && (
-        <Fab
-          color="primary"
-          sx={{
-            position: 'fixed',
-            bottom: 24,
-            right: 24,
-            width: 80,
-            height: 80
-          }}
-          onClick={handleCheckout}
-        >
-          <Badge badgeContent={cart.length} color="secondary">
-            <Box sx={{ textAlign: 'center' }}>
-              <ShoppingCart />
-              <Typography variant="caption" display="block" sx={{ fontSize: '0.7rem' }}>
-                ${total.toFixed(0)}
-              </Typography>
-            </Box>
-          </Badge>
-        </Fab>
-      )}
 
       {/* Notifications */}
       {notifications.map((notification, index) => (
@@ -958,35 +1041,73 @@ const POS: React.FC = () => {
               
               <Divider sx={{ my: 2 }} />
               
-              {currentSale.items.map((item, index) => (
-                <Box key={index} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                  <Box>
-                    <Typography variant="body2" fontWeight="medium">
-                      {item.name}
-                    </Typography>
-                    <Typography variant="caption" color="textSecondary">
-                      {item.quantity} x ${Number(item.price).toFixed(2)}
-                    </Typography>
+              {currentSale.items.map((item, index) => {
+                const itemSubtotal = Number(item.price) * item.quantity;
+                const itemDiscount = itemSubtotal * ((item.discount_percent || 0) / 100);
+                const itemTotal = itemSubtotal - itemDiscount;
+                
+                return (
+                  <Box key={index} sx={{ mb: 1 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Box>
+                        <Typography variant="body2" fontWeight="medium">
+                          {item.name}
+                        </Typography>
+                        <Typography variant="caption" color="textSecondary">
+                          {item.quantity} x ₱{Number(item.price).toFixed(2)}
+                          {item.discount_percent && item.discount_percent > 0 && ` (-${item.discount_percent}%)`}
+                        </Typography>
+                      </Box>
+                      <Typography variant="body2" fontWeight="medium">
+                        ₱{itemTotal.toFixed(2)}
+                      </Typography>
+                    </Box>
                   </Box>
-                  <Typography variant="body2" fontWeight="medium">
-                    ${(Number(item.price) * item.quantity).toFixed(2)}
-                  </Typography>
-                </Box>
-              ))}
+                );
+              })}
               
               <Divider sx={{ my: 2 }} />
               
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography variant="body2">VATABLE SALE (Less VAT):</Typography>
-                <Typography>₱{Number(currentSale.subtotal).toFixed(2)}</Typography>
-              </Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography variant="body2">VAT (12%):</Typography>
-                <Typography>₱{Number(currentSale.tax).toFixed(2)}</Typography>
-              </Box>
+              {taxMode === 'NON-VAT' ? (
+                <>
+                  {discount > 0 && (
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                      <Typography variant="body2" color="error">Discount:</Typography>
+                      <Typography color="error">-₱{discount.toFixed(2)}</Typography>
+                    </Box>
+                  )}
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                    <Typography variant="body2">NON-VAT Sale:</Typography>
+                    <Typography>₱{Number(currentSale.subtotal).toFixed(2)}</Typography>
+                  </Box>
+                </>
+              ) : (
+                <>
+                  {discount > 0 && (
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                      <Typography variant="body2" color="error">Discount:</Typography>
+                      <Typography color="error">-₱{discount.toFixed(2)}</Typography>
+                    </Box>
+                  )}
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                    <Typography variant="body2">VATABLE SALE (Less VAT):</Typography>
+                    <Typography>₱{Number(currentSale.subtotal).toFixed(2)}</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                    <Typography variant="body2">VAT (12%):</Typography>
+                    <Typography>₱{Number(currentSale.tax).toFixed(2)}</Typography>
+                  </Box>
+                  {taxMode === 'EWT' && ewt > 0 && (
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                      <Typography variant="body2" color="warning.main">Less: EWT (1%):</Typography>
+                      <Typography color="warning.main">-₱{ewt.toFixed(2)}</Typography>
+                    </Box>
+                  )}
+                </>
+              )}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '1.1rem' }}>
-                <Typography fontWeight="bold">Total:</Typography>
-                <Typography fontWeight="bold">${Number(currentSale.total).toFixed(2)}</Typography>
+                <Typography fontWeight="bold">{taxMode === 'EWT' ? 'Net Amount:' : 'Total:'}</Typography>
+                <Typography fontWeight="bold">₱{Number(currentSale.total).toFixed(2)}</Typography>
               </Box>
               
               {currentSale.payments.map((payment, index) => (
