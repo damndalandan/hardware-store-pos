@@ -3,7 +3,7 @@ import {
   Box, Typography, Button, TextField, Grid, Card, CardContent, Dialog, DialogTitle,
   DialogContent, DialogActions, Select, MenuItem, FormControl, InputLabel,
   Chip, Alert, Snackbar, Tooltip, IconButton, LinearProgress, CircularProgress,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Popover, Menu, List, ListItem, ListItemIcon, ListItemText, Divider, Checkbox, TableSortLabel,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Popover, Menu, List, ListItem, ListItemIcon, ListItemText, ListItemButton, Divider, Checkbox, TableSortLabel,
   RadioGroup, FormControlLabel, Radio, Tabs, Tab, InputAdornment, TablePagination
 } from '@mui/material';
 import {
@@ -70,6 +70,9 @@ const Products: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const isMounted = useRef(false);
   
+  // Split-pane state
+  const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
+  
   // Add component crash protection
   const [componentError, setComponentError] = useState<Error | null>(null);
   
@@ -108,8 +111,7 @@ const Products: React.FC = () => {
   const [categoryFormError, setCategoryFormError] = useState<string | null>(null);
   const [deleteCategoryId, setDeleteCategoryId] = useState<number | null>(null);
   const [deletingCategory, setDeletingCategory] = useState(false);
-  // Subpage toggle: 'product' | 'category'
-  const [productSubPage, setProductSubPage] = useState<'product' | 'category'>('product');
+  // Subpage toggle removed - we now use split-pane layout
   
   // Form states
   const [editingProduct, setEditingProduct] = useState<Partial<Product>>({});
@@ -188,9 +190,7 @@ const Products: React.FC = () => {
       if (filterCategory) params.append('category', filterCategory);
       if (debouncedFilterBrand) params.append('brand', debouncedFilterBrand);
       
-      console.log('Fetching products from:', `${API_BASE_URL}/products?${params}`);
       const response = await axios.get(`${API_BASE_URL}/products?${params}`);
-      console.log('Products response:', response.data);
       
       const responseData = response.data;
       if (responseData && responseData.products && Array.isArray(responseData.products)) {
@@ -528,24 +528,23 @@ const Products: React.FC = () => {
         return;
       }
 
-      // Build payload with the exact camelCase fields the backend expects.
+      // Build payload - use snake_case for database columns
       const productData = {
         sku: editingProduct.sku || '',
         barcode: scannedBarcode || editingProduct.barcode || null,
         name: editingProduct.name || '',
         brand: editingProduct.brand || null,
-  description: editingProduct.description || null,
-        categoryId: editingProduct.category_id ?? null,
+        description: editingProduct.description || null,
+        category_id: editingProduct.category_id ?? null,
         size: editingProduct.size || null,
         variety: editingProduct.variety || null,
         color: editingProduct.color || null,
         unit: editingProduct.unit || '',
-        costPrice: Number(editingProduct.cost_price) || 0,
-        sellingPrice: Number(editingProduct.selling_price) || 0,
-        minStockLevel: Number(editingProduct.min_stock_level) || 0,
-        maxStockLevel: Number(editingProduct.max_stock_level) || 0,
-        supplierId: editingProduct.supplier_id ?? null,
-        initialStock: Number(editingProduct.current_stock) || 0
+        cost_price: Number(editingProduct.cost_price) || 0,
+        selling_price: Number(editingProduct.selling_price) || 0,
+        min_stock_level: Number(editingProduct.min_stock_level) || 0,
+        max_stock_level: Number(editingProduct.max_stock_level) || 0,
+        supplier_id: editingProduct.supplier_id ?? null
       };
 
       if (editingProduct.id) {
@@ -555,8 +554,12 @@ const Products: React.FC = () => {
         setProductDialog(false);
         resetForm();
       } else {
-        // Create new product
-        await axios.post(`${API_BASE_URL}/products`, productData);
+        // Create new product - add initial stock for creation
+        const createData = {
+          ...productData,
+          initialStock: Number(editingProduct.current_stock) || 0
+        };
+        await axios.post(`${API_BASE_URL}/products`, createData);
         showNotification('Product created successfully');
         
         if (createAnother) {
@@ -645,16 +648,16 @@ const Products: React.FC = () => {
           name: baseProduct.name || '',
           brand: baseProduct.brand || null,
           description: baseProduct.description || null,
-          categoryId: baseProduct.category_id ?? null,
+          category_id: baseProduct.category_id ?? null,
           size: v.size || null,
           variety: baseProduct.variety || null,
           color: v.color || null,
           unit: baseProduct.unit || '',
-          costPrice: Number(v.costPrice) || 0,
-          sellingPrice: Number(v.sellingPrice) || 0,
-          minStockLevel: Number(baseProduct.min_stock_level) || 0,
-          maxStockLevel: Number(baseProduct.max_stock_level) || 0,
-          supplierId: baseProduct.supplier_id ?? null,
+          cost_price: Number(v.costPrice) || 0,
+          selling_price: Number(v.sellingPrice) || 0,
+          min_stock_level: Number(baseProduct.min_stock_level) || 0,
+          max_stock_level: Number(baseProduct.max_stock_level) || 0,
+          supplier_id: baseProduct.supplier_id ?? null,
           initialStock: Number(v.stock) || 0
         };
         return axios.post(`${API_BASE_URL}/products`, variantData);
@@ -817,10 +820,7 @@ const Products: React.FC = () => {
       return;
     }
 
-    console.log('=== IMPORT START ===');
-    console.log('File name:', importFile.name);
-    console.log('File size:', importFile.size);
-    console.log('File type:', importFile.type);
+    // Starting import process
 
     setImporting(true);
     try {
@@ -1199,8 +1199,7 @@ const Products: React.FC = () => {
       sx={{
         p: 3,
         backgroundColor: '#f7f8fA',
-        height: '100vh',
-        overflow: 'hidden',
+        minHeight: '100vh',
         '&, & *': {
           fontSize: '14px !important'
         },
@@ -1226,152 +1225,231 @@ const Products: React.FC = () => {
         </Alert>
       )}
       
-      {/* Product / Category tabs */}
-      <Tabs
-        value={productSubPage}
-        onChange={(_, value) => setProductSubPage(value)}
-        sx={{ mb: 2 }}
-        aria-label="Product and Category tabs"
-      >
-        <Tab label="Product" value="product" />
-        <Tab label="Category" value="category" />
-      </Tabs>
+      {/* Split Pane Layout */}
+      <Grid container spacing={3}>
+        {/* Left Pane - Categories List */}
+        <Grid item xs={12} md={3}>
+          <Card sx={{ height: 'calc(100vh - 50px)', display: 'flex', flexDirection: 'column' }}>
+            <CardContent sx={{ p: 2, pb: 1 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>Categories</Typography>
+                <Tooltip title="Add Category">
+                  <IconButton 
+                    size="small" 
+                    onClick={() => {
+                      setNewCategoryName('');
+                      setNewCategoryDescription('');
+                      setNewCategoryParentId('');
+                      setCategoryDialogOpen(true);
+                    }}
+                    disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+                  >
+                    <AddIcon />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+            </CardContent>
 
-      {/* Toolbar (show only on Product subpage) */}
-      {productSubPage === 'product' && (
-        <Card sx={{ mb: 2, backgroundColor: '#fff', borderRadius: 2, boxShadow: 1 }}>
-          <CardContent sx={{ p: 1.5, pb: '12px !important', display: 'flex', alignItems: 'center' }}>
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={4}>
+            {/* Category List */}
+            <Box sx={{ flex: 1, overflow: 'auto', px: 1 }}>
+              <List dense>
+                {/* All Products option */}
+                <ListItem
+                  button
+                  selected={selectedCategory === null}
+                  onClick={() => {
+                    setSelectedCategory(null);
+                    setFilterCategory('');
+                  }}
+                  sx={{
+                    borderRadius: 1,
+                    mb: 0.5,
+                    '&.Mui-selected': {
+                      backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                      '&:hover': {
+                        backgroundColor: 'rgba(25, 118, 210, 0.12)',
+                      }
+                    }
+                  }}
+                >
+                  <ListItemText
+                    primary="All Products"
+                    secondary={`${products.length} items`}
+                  />
+                </ListItem>
+
+                {/* Category items */}
+                {categories.map((category) => {
+                  const categoryProducts = products.filter(p => p.category_id === category.id);
+                  return (
+                    <ListItem
+                      key={category.id}
+                      button
+                      selected={selectedCategory?.id === category.id}
+                      onClick={() => {
+                        setSelectedCategory(category);
+                        setFilterCategory(category.name);
+                      }}
+                      sx={{
+                        borderRadius: 1,
+                        mb: 0.5,
+                        '&.Mui-selected': {
+                          backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                          '&:hover': {
+                            backgroundColor: 'rgba(25, 118, 210, 0.12)',
+                          }
+                        }
+                      }}
+                      secondaryAction={
+                        <Box sx={{ display: 'flex', gap: 0.5 }}>
+                          <IconButton
+                            edge="end"
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingCategoryId(category.id);
+                              setNewCategoryName(category.name || '');
+                              setNewCategoryDescription(category.description || '');
+                              setNewCategoryParentId(category.parent_id ?? '');
+                              setCategoryFormError(null);
+                              setCategoryDialogOpen(true);
+                            }}
+                            disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                          <IconButton
+                            edge="end"
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteCategoryId(category.id);
+                            }}
+                            disabled={!user || user.role !== 'admin'}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      }
+                    >
+                      <ListItemText
+                        primary={category.name}
+                        secondary={`${categoryProducts.length} items`}
+                      />
+                    </ListItem>
+                  );
+                })}
+              </List>
+            </Box>
+          </Card>
+        </Grid>
+
+        {/* Right Pane - Products List */}
+        <Grid item xs={12} md={9}>
+          <Card sx={{ height: 'calc(100vh - 50px)', display: 'flex', flexDirection: 'column' }}>
+            {/* Toolbar */}
+            <CardContent sx={{ p: 2, pb: 1 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  {selectedCategory ? selectedCategory.name : 'All Products'}
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<AddIcon />}
+                    onClick={() => {
+                      resetForm();
+                      setProductDialog(true);
+                    }}
+                    disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
+                  >
+                    Add Product
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<DownloadIcon />}
+                    onClick={handleExport}
+                    disabled={loading}
+                  >
+                    Export
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<UploadIcon />}
+                    onClick={handleExcelImportClick}
+                    disabled={!user || (user.role !== 'admin' && user.role !== 'manager') || loading}
+                  >
+                    Import
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<RefreshIcon />}
+                    onClick={fetchProducts}
+                    disabled={loading}
+                  >
+                    Refresh
+                  </Button>
+                </Box>
+              </Box>
+
+              {/* Search bar */}
               <TextField
                 fullWidth
+                size="small"
                 placeholder="Search products..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                variant="outlined"
-                size="small"
                 InputProps={{
-                  sx: {
-                    borderRadius: '20px',
-                    backgroundColor: '#ffffff',
-                    px: 1.5,
-                    py: 0,
-                    boxShadow: 'inset 0 1px 0 rgba(0,0,0,0.02)',
-                    '& .MuiOutlinedInput-notchedOutline': { border: '1px solid rgba(0,0,0,0.08)' },
-                    '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(0,0,0,0.12)' },
-                    '& .MuiInputBase-input': { padding: '10px 12px', fontSize: '14px' }
-                  },
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" />
+                    </InputAdornment>
+                  ),
                   endAdornment: (
                     <InputAdornment position="end">
-                      <SearchIcon sx={{ color: 'rgba(0,0,0,0.45)', fontSize: 18, mr: 1 }} />
-                      <IconButton size="small" onClick={startBarcodeScanner} aria-label="Scan barcode" sx={{ mr: 0 }}>
+                      <IconButton size="small" onClick={startBarcodeScanner} aria-label="Scan barcode">
                         <ScanIcon fontSize="small" />
                       </IconButton>
                     </InputAdornment>
                   )
                 }}
               />
-            </Grid>
-            {/* Category quick filter removed from header as requested; keep header table filter button intact */}
-            {/* Brand quick filter removed from header as requested; keep header table filter button intact */}
-            <Grid item xs={12} md={8}>
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
-                <Button
-                  variant="outlined"
-                  startIcon={<AddIcon />}
-                  onClick={() => {
-                    resetForm();
-                    setProductDialog(true);
-                  }}
-                  disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
-                  sx={{ borderRadius: 2, textTransform: 'none', minHeight: 36, px: 2, whiteSpace: 'nowrap' }}
-                >
-                  Add Product
-                </Button>
-                {/* Scan button moved into the search input adornment for parity with POS */}
-                <Button
-                  variant="outlined"
-                  startIcon={<DownloadIcon />}
-                  onClick={handleExport}
-                  disabled={loading}
-                  sx={{ borderRadius: 2, textTransform: 'none', minHeight: 36, px: 2, whiteSpace: 'nowrap' }}
-                >
-                  Export
-                </Button>
-                <Button
-                  variant="contained"
-                  startIcon={<UploadIcon />}
-                  onClick={handleExcelImportClick}
-                  disabled={!user || (user.role !== 'admin' && user.role !== 'manager') || loading}
-                  sx={{ borderRadius: 2, textTransform: 'none', minHeight: 36, px: 2, whiteSpace: 'nowrap' }}
-                >
-                  Import Excel
-                </Button>
-                <Button
-                  variant="outlined"
-                  startIcon={<RefreshIcon />}
-                  onClick={fetchProducts}
-                  disabled={loading}
-                  sx={{ borderRadius: 2, textTransform: 'none', minHeight: 36, px: 2, whiteSpace: 'nowrap' }}
-                >
-                  Refresh
-                </Button>
-              </Box>
-            </Grid>
-          </Grid>
-          </CardContent>
-        </Card>
-      )}
+            </CardContent>
 
-      {/* Data Grid or Category Management depending on subpage */}
-      {productSubPage === 'product' && (
-        <Card sx={{ backgroundColor: 'transparent', boxShadow: 'none' }}>
-        {/* White background wrapper for the table so it appears as a card */}
-        <Paper sx={{ p: 2, bgcolor: '#fff', borderRadius: 2, mb: 2, boxShadow: 'none' }} elevation={0}>
+            <Divider />
+
+            {/* Products Table */}
+            <Paper sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 2, bgcolor: '#fff', borderRadius: 2, boxShadow: 'none' }} elevation={0}>
           <TableContainer
             sx={{
               position: 'relative',
               border: '1px solid',
               borderColor: 'divider',
               borderRadius: 2,
-              // ensure children don't overflow the rounded corners
-              overflowClipMargin: 'content-box',
-              // allow TableContainer to clip children to rounded corners
-              overflow: 'hidden',
-              '& .MuiTable-root': { borderRadius: 2 }
-            }}
-          >
-            {/* Inner scrolling area to keep rounded corners on the container */}
-            <Box sx={{
-              maxHeight: 538,
+              flex: 1,
               overflow: 'auto',
-              // custom scrollbar styling: ultra-thin and remove native buttons/triangle
+              maxHeight: 600,
+              '& .MuiTable-root': { borderRadius: 2 },
               '&::-webkit-scrollbar': {
-                width: 1,
-                height: 1,
-              },
-              '&::-webkit-scrollbar-button': {
-                display: 'none',
-                width: 0,
-                height: 0,
+                width: 8,
+                height: 8,
               },
               '&::-webkit-scrollbar-track': {
                 background: 'transparent',
               },
               '&::-webkit-scrollbar-thumb': {
-                backgroundColor: 'rgba(0,0,0,0.28)',
-                borderRadius: 999,
-                minHeight: 20,
+                backgroundColor: 'rgba(0,0,0,0.2)',
+                borderRadius: 4,
               },
-              '&::-webkit-scrollbar-corner': {
-                background: 'transparent'
+              '&::-webkit-scrollbar-thumb:hover': {
+                backgroundColor: 'rgba(0,0,0,0.3)',
               },
-              scrollbarWidth: 'thin',
-              scrollbarColor: 'rgba(0,0,0,0.28) transparent',
-              '&': {
-                MsOverflowStyle: 'auto'
-              }
-            }}>
+            }}
+          >
               <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 40 }, '& .MuiTableRow-root': { height: 40 } }}>
                   <TableHead>
                     <TableRow sx={{ height: 40 }}>
@@ -1525,8 +1603,7 @@ const Products: React.FC = () => {
                     )))}
                   </TableBody>
                 </Table>
-              </Box>
-            </TableContainer>
+          </TableContainer>
             
             {/* Pagination Controls */}
             <TablePagination
@@ -1545,7 +1622,8 @@ const Products: React.FC = () => {
                 borderColor: 'divider',
                 '& .MuiTablePagination-toolbar': {
                   minHeight: 48,
-                  px: 2
+                  px: 2,
+                  pb: 0
                 },
                 '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
                   fontSize: '14px'
@@ -1676,58 +1754,9 @@ const Products: React.FC = () => {
               </Box>
             </Popover>
           </Paper>
-        </Card>
-      )}
-
-      {productSubPage === 'category' && (
-        <Card sx={{ backgroundColor: 'transparent', boxShadow: 'none' }}>
-          <Paper sx={{ p: 2, bgcolor: '#fff', borderRadius: 2, mb: 2, boxShadow: 'none' }} elevation={0}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-              <Typography variant="h6">Categories</Typography>
-              <Box>
-                <Button variant="outlined" startIcon={<AddIcon />} onClick={() => { setNewCategoryName(''); setNewCategoryDescription(''); setNewCategoryParentId(''); setCategoryDialogOpen(true); }}>
-                  Add Category
-                </Button>
-              </Box>
-            </Box>
-
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Name</TableCell>
-                    <TableCell>Description</TableCell>
-                    <TableCell>Parent</TableCell>
-                    <TableCell align="right">Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {(categories || []).map((cat) => (
-                    <TableRow key={cat.id}>
-                      <TableCell>{cat.name}</TableCell>
-                      <TableCell>{cat.description || '-'}</TableCell>
-                      <TableCell>{(cat as any).parent_name || '-'}</TableCell>
-                      <TableCell align="right">
-                        <Button size="small" onClick={() => {
-                          setEditingCategoryId(cat.id);
-                          setNewCategoryName(cat.name || '');
-                          setNewCategoryDescription(cat.description || '');
-                          setNewCategoryParentId(cat.parent_id ?? '');
-                          setCategoryFormError(null);
-                          setCategoryDialogOpen(true);
-                        }}>Edit</Button>
-                        <Button size="small" color="error" onClick={() => setDeleteCategoryId(cat.id)} sx={{ ml: 1 }}>
-                          Delete
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </Paper>
-        </Card>
-      )}
+          </Card>
+        </Grid>
+      </Grid>
 
       {/* Product Dialog */}
       <Dialog 

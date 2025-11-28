@@ -54,7 +54,7 @@ import axios from 'axios';
 import { saveAs } from 'file-saver';
 import { useAuth } from '../contexts/AuthContext';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 interface Sale {
   id: number;

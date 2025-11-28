@@ -9,7 +9,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import PageContainer from '../components/common/PageContainer';
 import { useNotification } from '../hooks/useNotification';
 import {
-  Dashboard as DashboardIcon, TrendingUp as TrendingUpIcon, Assessment as ReportIcon,
+  Dashboard as DashboardIcon, TrendingUp as TrendingUpIcon, Assessment as AssessmentIcon,
   Inventory as InventoryIcon, Business as SuppliersIcon, MonetizationOn as ProfitIcon,
   Download as DownloadIcon, Refresh as RefreshIcon, DateRange as DateIcon
 } from '@mui/icons-material';
@@ -196,6 +196,7 @@ const Reports: React.FC = () => {
   
   const [startDate, setStartDate] = useState<Date | null>(getStartDate());
   const [endDate, setEndDate] = useState<Date | null>(new Date());
+  const [dateFilter, setDateFilter] = useState<string>('last_30_days');
   
   // Data states
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
@@ -211,6 +212,56 @@ const Reports: React.FC = () => {
   const formatNumber = (num: number | string) => new Intl.NumberFormat().format(Number(num || 0));
   const formatDate = (dateStr: string) => new Date(dateStr).toLocaleDateString();
   const formatPercent = (num: number | string) => `${Number(num || 0).toFixed(1)}%`;
+
+  // Handle date filter dropdown
+  const handleDateFilterChange = (value: string) => {
+    setDateFilter(value);
+    const now = new Date();
+    let start = new Date();
+    
+    switch (value) {
+      case 'today':
+        start = new Date();
+        start.setHours(0, 0, 0, 0);
+        setStartDate(start);
+        setEndDate(now);
+        break;
+      case 'yesterday':
+        start = new Date();
+        start.setDate(start.getDate() - 1);
+        start.setHours(0, 0, 0, 0);
+        const yesterday = new Date(start);
+        yesterday.setHours(23, 59, 59, 999);
+        setStartDate(start);
+        setEndDate(yesterday);
+        break;
+      case 'last_week':
+        start = new Date();
+        start.setDate(start.getDate() - 7);
+        setStartDate(start);
+        setEndDate(now);
+        break;
+      case 'last_month':
+        start = new Date();
+        start.setMonth(start.getMonth() - 1);
+        setStartDate(start);
+        setEndDate(now);
+        break;
+      case 'last_year':
+        start = new Date();
+        start.setFullYear(start.getFullYear() - 1);
+        setStartDate(start);
+        setEndDate(now);
+        break;
+      case 'last_30_days':
+      default:
+        start = new Date();
+        start.setDate(start.getDate() - 30);
+        setStartDate(start);
+        setEndDate(now);
+        break;
+    }
+  };
 
   // Fetch functions
   const fetchDashboard = useCallback(async () => {
@@ -354,7 +405,12 @@ const Reports: React.FC = () => {
   return (
     <ErrorBoundary>
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <PageContainer>
+      <Box sx={{ 
+        p: 3, 
+        backgroundColor: '#f5f7fa', 
+        minHeight: '100vh',
+        '&, & *': { fontSize: '14px !important' }
+      }}>
         {/* Notification Snackbar */}
         <Snackbar
           open={notification.open}
@@ -367,31 +423,132 @@ const Reports: React.FC = () => {
           </Alert>
         </Snackbar>
 
-        {/* Date Range Controls (show for Dashboard, Sales, Profitability, and Supplier tabs) */}
+        {/* Header */}
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h4" sx={{ fontWeight: 700, color: '#1a1a1a', mb: 0.5 }}>
+            Reports & Analytics
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Comprehensive business insights and performance metrics
+          </Typography>
+        </Box>
+
+        {/* Tabs Navigation */}
+        <Card sx={{ mb: 3, boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRadius: 2 }}>
+          <Tabs 
+            value={activeTab} 
+            onChange={(_, newValue) => setActiveTab(newValue)}
+            variant="scrollable"
+            scrollButtons="auto"
+            sx={{ 
+              borderBottom: 1, 
+              borderColor: 'divider',
+              '& .MuiTab-root': {
+                minHeight: 64,
+                textTransform: 'none',
+                fontSize: '14px',
+                fontWeight: 500,
+                '&.Mui-selected': {
+                  color: 'primary.main',
+                  fontWeight: 600
+                }
+              }
+            }}
+          >
+            <Tab 
+              label="Dashboard" 
+              icon={<DashboardIcon />} 
+              iconPosition="start"
+              sx={{ gap: 1 }}
+            />
+            <Tab 
+              label="Sales Analytics" 
+              icon={<TrendingUpIcon />} 
+              iconPosition="start"
+              sx={{ gap: 1 }}
+            />
+            <Tab 
+              label="Inventory" 
+              icon={<InventoryIcon />} 
+              iconPosition="start"
+              sx={{ gap: 1 }}
+            />
+            <Tab 
+              label="Profitability" 
+              icon={<ProfitIcon />} 
+              iconPosition="start"
+              sx={{ gap: 1 }}
+            />
+            <Tab 
+              label="Suppliers" 
+              icon={<SuppliersIcon />} 
+              iconPosition="start"
+              sx={{ gap: 1 }}
+            />
+          </Tabs>
+        </Card>
+
+        {/* Date Range Controls & Actions */}
         {(activeTab === 0 || activeTab === 1 || activeTab === 3 || activeTab === 4) && (
-        <Card sx={{ mb: 2, boxShadow: 'none', bgcolor: '#fff' }}>
-          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+        <Card sx={{ mb: 3, boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRadius: 2 }}>
+          <CardContent sx={{ p: 2.5 }}>
             <Grid container spacing={2} alignItems="center">
-              <Grid item xs={12} md={2}>
+              <Grid item xs={12} sm={6} md={2}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Date Range</InputLabel>
+                  <Select
+                    value={dateFilter}
+                    onChange={(e) => handleDateFilterChange(e.target.value)}
+                    label="Date Range"
+                    sx={{ borderRadius: 1.5 }}
+                  >
+                    <MenuItem value="today">Today</MenuItem>
+                    <MenuItem value="yesterday">Yesterday</MenuItem>
+                    <MenuItem value="last_week">Last Week</MenuItem>
+                    <MenuItem value="last_month">Last Month</MenuItem>
+                    <MenuItem value="last_30_days">Last 30 Days</MenuItem>
+                    <MenuItem value="last_year">Last Year</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} sm={6} md={2.5}>
                 <DatePicker
                   label="Start Date"
                   value={startDate}
-                  onChange={setStartDate}
-                  slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                  onChange={(date) => {
+                    setStartDate(date);
+                    setDateFilter(''); // Clear filter when manually selecting dates
+                  }}
+                  slotProps={{ 
+                    textField: { 
+                      size: 'small', 
+                      fullWidth: true,
+                      sx: { '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }
+                    } 
+                  }}
                 />
               </Grid>
-              <Grid item xs={12} md={2}>
+              <Grid item xs={12} sm={6} md={2.5}>
                 <DatePicker
                   label="End Date"
                   value={endDate}
-                  onChange={setEndDate}
-                  slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                  onChange={(date) => {
+                    setEndDate(date);
+                    setDateFilter(''); // Clear filter when manually selecting dates
+                  }}
+                  slotProps={{ 
+                    textField: { 
+                      size: 'small', 
+                      fullWidth: true,
+                      sx: { '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }
+                    } 
+                  }}
                 />
               </Grid>
-              <Grid item xs={12} md={8}>
-                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                    <Button
-                    variant="outlined"
+              <Grid item xs={12} md={5}>
+                <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
+                  <Button
+                    variant="contained"
                     startIcon={<RefreshIcon />}
                     onClick={() => {
                       switch (activeTab as number) {
@@ -403,8 +560,15 @@ const Reports: React.FC = () => {
                       }
                     }}
                     disabled={loading}
+                    sx={{ 
+                      textTransform: 'none',
+                      borderRadius: 1.5,
+                      px: 2.5,
+                      boxShadow: 'none',
+                      '&:hover': { boxShadow: '0 4px 12px rgba(25, 118, 210, 0.25)' }
+                    }}
                   >
-                    Refresh
+                    Refresh Data
                   </Button>
                   {(activeTab as number) !== 2 && (
                     <>
@@ -416,8 +580,13 @@ const Reports: React.FC = () => {
                           handleExport(reportTypes[activeTab], 'csv');
                         }}
                         disabled={loading}
+                        sx={{ 
+                          textTransform: 'none',
+                          borderRadius: 1.5,
+                          px: 2.5
+                        }}
                       >
-                        Export CSV
+                        CSV
                       </Button>
                       <Button
                         variant="outlined"
@@ -427,8 +596,13 @@ const Reports: React.FC = () => {
                           handleExport(reportTypes[activeTab], 'excel');
                         }}
                         disabled={loading}
+                        sx={{ 
+                          textTransform: 'none',
+                          borderRadius: 1.5,
+                          px: 2.5
+                        }}
                       >
-                        Export Excel
+                        Excel
                       </Button>
                     </>
                   )}
@@ -439,147 +613,320 @@ const Reports: React.FC = () => {
         </Card>
         )}
 
-        {/* Tabs */}
-        <Box sx={{ mb: 2 }}>
-          <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)} sx={{ borderBottom: 1, borderColor: 'divider' }}>
-            <Tab label="Dashboard Overview" icon={<DashboardIcon />} />
-            <Tab label="Sales Analytics" icon={<TrendingUpIcon />} />
-            <Tab label="Inventory Reports" icon={<InventoryIcon />} />
-            <Tab label="Profitability Analysis" icon={<ProfitIcon />} />
-            <Tab label="Supplier Performance" icon={<SuppliersIcon />} />
-          </Tabs>
-        </Box>
-
         {/* Dashboard Overview */}
         {activeTab === 0 && !loading && !error && dashboardData && (dashboardData.sales || dashboardData.dailySales) && (
           <Grid container spacing={3}>
             {/* Summary Cards */}
-            <Grid item xs={12} md={3}>
-              <Card>
-                <CardContent sx={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-                  <Typography variant="h4" color="primary">
-                    {formatNumber(dashboardData.sales.total_transactions)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Total Transactions
-                  </Typography>
-                  <Chip
-                    label={`${dashboardData.sales.growth.transactions > 0 ? '+' : ''}${formatPercent(dashboardData.sales.growth.transactions)}`}
-                    color={dashboardData.sales.growth.transactions >= 0 ? 'success' : 'error'}
-                    size="small"
-                    sx={{ mt: 1 }}
-                  />
+            <Grid item xs={12} sm={6} md={3}>
+              <Card sx={{ 
+                height: '100%',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                transition: 'all 0.3s ease',
+                '&:hover': {
+                  transform: 'translateY(-4px)',
+                  boxShadow: 4
+                }
+              }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Total Transactions
+                      </Typography>
+                      <Typography variant="h4" component="div" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                        {formatNumber(dashboardData.sales.total_transactions)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Last 30 days
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      width: 56, 
+                      height: 56, 
+                      borderRadius: '50%', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      bgcolor: 'primary.main',
+                      color: 'white'
+                    }}>
+                      <DashboardIcon sx={{ fontSize: 32 }} />
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    {dashboardData.sales.growth.transactions >= 0 ? (
+                      <TrendingUpIcon sx={{ color: 'success.main', fontSize: 20 }} />
+                    ) : (
+                      <TrendingUpIcon sx={{ color: 'error.main', fontSize: 20, transform: 'rotate(180deg)' }} />
+                    )}
+                    <Typography variant="body2" color={dashboardData.sales.growth.transactions >= 0 ? 'success.main' : 'error.main'}>
+                      {dashboardData.sales.growth.transactions >= 0 ? '+' : ''}{formatPercent(dashboardData.sales.growth.transactions)} from last period
+                    </Typography>
+                  </Box>
                 </CardContent>
               </Card>
             </Grid>
-            <Grid item xs={12} md={3}>
-              <Card>
-                <CardContent sx={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-                  <Typography variant="h4" color="success.main">
-                    {formatCurrency(dashboardData.sales.total_revenue)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Total Revenue
-                  </Typography>
-                  <Chip
-                    label={`${dashboardData.sales.growth.revenue > 0 ? '+' : ''}${formatPercent(dashboardData.sales.growth.revenue)}`}
-                    color={dashboardData.sales.growth.revenue >= 0 ? 'success' : 'error'}
-                    size="small"
-                    sx={{ mt: 1 }}
-                  />
+            <Grid item xs={12} sm={6} md={3}>
+              <Card sx={{ 
+                height: '100%',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                transition: 'all 0.3s ease',
+                '&:hover': {
+                  transform: 'translateY(-4px)',
+                  boxShadow: 4
+                }
+              }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Total Revenue
+                      </Typography>
+                      <Typography variant="h4" component="div" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                        {formatCurrency(dashboardData.sales.total_revenue)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {formatNumber(dashboardData.sales.total_transactions)} transactions
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      width: 56, 
+                      height: 56, 
+                      borderRadius: '50%', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      bgcolor: 'success.main',
+                      color: 'white'
+                    }}>
+                      <AssessmentIcon sx={{ fontSize: 32 }} />
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    {dashboardData.sales.growth.revenue >= 0 ? (
+                      <TrendingUpIcon sx={{ color: 'success.main', fontSize: 20 }} />
+                    ) : (
+                      <TrendingUpIcon sx={{ color: 'error.main', fontSize: 20, transform: 'rotate(180deg)' }} />
+                    )}
+                    <Typography variant="body2" color={dashboardData.sales.growth.revenue >= 0 ? 'success.main' : 'error.main'}>
+                      {dashboardData.sales.growth.revenue >= 0 ? '+' : ''}{formatPercent(dashboardData.sales.growth.revenue)} from last period
+                    </Typography>
+                  </Box>
                 </CardContent>
               </Card>
             </Grid>
-            <Grid item xs={12} md={3}>
-              <Card>
-                <CardContent sx={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-                  <Typography variant="h4" color="info.main">
-                    {formatCurrency(dashboardData.sales.average_sale)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Average Sale
-                  </Typography>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card sx={{ 
+                height: '100%',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                transition: 'all 0.3s ease',
+                '&:hover': {
+                  transform: 'translateY(-4px)',
+                  boxShadow: 4
+                }
+              }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Average Sale
+                      </Typography>
+                      <Typography variant="h4" component="div" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                        {formatCurrency(dashboardData.sales.average_sale)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Per transaction
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      width: 56, 
+                      height: 56, 
+                      borderRadius: '50%', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      bgcolor: 'info.main',
+                      color: 'white'
+                    }}>
+                      <TrendingUpIcon sx={{ fontSize: 32 }} />
+                    </Box>
+                  </Box>
                 </CardContent>
               </Card>
             </Grid>
-            <Grid item xs={12} md={3}>
-              <Card>
-                <CardContent sx={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-                  <Typography variant="h4" color="warning.main">
-                    {formatCurrency(dashboardData.inventory.inventory_value)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Inventory Value
-                  </Typography>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card sx={{ 
+                height: '100%',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                transition: 'all 0.3s ease',
+                '&:hover': {
+                  transform: 'translateY(-4px)',
+                  boxShadow: 4
+                }
+              }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Inventory Value
+                      </Typography>
+                      <Typography variant="h4" component="div" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                        {formatCurrency(dashboardData.inventory.inventory_value)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Total stock value
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      width: 56, 
+                      height: 56, 
+                      borderRadius: '50%', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      bgcolor: 'warning.main',
+                      color: 'white'
+                    }}>
+                      <InventoryIcon sx={{ fontSize: 32 }} />
+                    </Box>
+                  </Box>
                 </CardContent>
               </Card>
             </Grid>
 
             {/* Daily Sales Chart */}
-            <Grid item xs={12} md={8}>
-              <Card>
-                <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Daily Sales Trend
-                  </Typography>
+            <Grid item xs={12} lg={8}>
+              <Card sx={{ boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRadius: 2, height: '100%' }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2.5 }}>
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>
+                        Daily Sales Trend
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Revenue performance over time
+                      </Typography>
+                    </Box>
+                  </Box>
                   {dashboardData.dailySales && dashboardData.dailySales.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
+                  <ResponsiveContainer width="100%" height={340}>
                     <AreaChart data={dashboardData.dailySales}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" />
-                      <YAxis />
-                      <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-                      <Area type="monotone" dataKey="revenue" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
+                      <defs>
+                        <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#667eea" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="#667eea" stopOpacity={0.1}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis 
+                        dataKey="date" 
+                        tick={{ fontSize: 12 }}
+                        stroke="#999"
+                      />
+                      <YAxis 
+                        tick={{ fontSize: 12 }}
+                        stroke="#999"
+                      />
+                      <Tooltip 
+                        formatter={(value) => formatCurrency(Number(value))}
+                        contentStyle={{ 
+                          borderRadius: 8, 
+                          border: '1px solid #e0e0e0',
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                        }}
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey="revenue" 
+                        stroke="#667eea" 
+                        strokeWidth={2}
+                        fill="url(#colorRevenue)" 
+                      />
                     </AreaChart>
                   </ResponsiveContainer>
                   ) : (
-                    <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
-                      No sales data available for this period
-                    </Typography>
+                    <Box sx={{ 
+                      height: 340, 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      bgcolor: '#fafafa',
+                      borderRadius: 2
+                    }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No sales data available for this period
+                      </Typography>
+                    </Box>
                   )}
                 </CardContent>
               </Card>
             </Grid>
 
             {/* Top Products */}
-            <Grid item xs={12} md={4}>
-              <Card>
-                <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Top Selling Products
-                  </Typography>
-                  {dashboardData.topProducts && dashboardData.topProducts.length > 0 ? (
-                  <TableContainer sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 320, overflow: 'auto' }}>
-                    <Table size="small" stickyHeader sx={{ '& .MuiTableRow-root': { height: 40 }, '& .MuiTableCell-root': { py: 0.5 } }}>
-                      <TableHead>
-                        <TableRow sx={{ height: 40 }}>
-                          <TableCell sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Product</TableCell>
-                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Sold</TableCell>
-                          <TableCell align="right" sx={{ bgcolor: '#f7f7f7', fontWeight: 600 }}>Revenue</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {dashboardData.topProducts.slice(0, 8).map((product, index) => (
-                          <TableRow key={index} hover sx={{ height: 40 }}>
-                            <TableCell>
-                              <Typography variant="body2" fontWeight="bold">
-                                {product.name}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {product.sku}
-                              </Typography>
-                            </TableCell>
-                            <TableCell align="right">{product.total_sold}</TableCell>
-                            <TableCell align="right">{formatCurrency(product.total_revenue)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
-                      No product sales data available
+            <Grid item xs={12} lg={4}>
+              <Card sx={{ boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRadius: 2, height: '100%' }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Box sx={{ mb: 2.5 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>
+                      Top Sellers
                     </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Best performing products
+                    </Typography>
+                  </Box>
+                  {dashboardData.topProducts && dashboardData.topProducts.length > 0 ? (
+                  <Box sx={{ maxHeight: 340, overflow: 'auto' }}>
+                    {dashboardData.topProducts.slice(0, 8).map((product, index) => (
+                      <Box 
+                        key={index}
+                        sx={{ 
+                          p: 2, 
+                          mb: 1,
+                          bgcolor: '#f8f9fa',
+                          borderRadius: 1.5,
+                          borderLeft: '3px solid',
+                          borderLeftColor: COLORS[index % COLORS.length],
+                          '&:hover': {
+                            bgcolor: '#f0f2f5',
+                            transform: 'translateX(4px)',
+                            transition: 'all 0.2s'
+                          }
+                        }}
+                      >
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                              {product.name}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              SKU: {product.sku}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ textAlign: 'right' }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600, color: 'success.main' }}>
+                              {formatCurrency(product.total_revenue)}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {product.total_sold} sold
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Box>
+                    ))}
+                  </Box>
+                  ) : (
+                    <Box sx={{ 
+                      height: 340, 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      bgcolor: '#fafafa',
+                      borderRadius: 2
+                    }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No product sales data available
+                      </Typography>
+                    </Box>
                   )}
                 </CardContent>
               </Card>
@@ -587,35 +934,96 @@ const Reports: React.FC = () => {
 
             {/* Inventory Status */}
             <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Inventory Status
-                  </Typography>
-                  <Grid container spacing={2} sx={{ textAlign: 'center' }}>
-                    <Grid item xs={3}>
-                      <Typography variant="h5" color="primary">
-                        {formatNumber(dashboardData.inventory.total_products)}
-                      </Typography>
-                      <Typography variant="caption">Total Products</Typography>
+              <Card sx={{ boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRadius: 2 }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Box sx={{ mb: 2.5 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>
+                      Inventory Overview
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Current stock status
+                    </Typography>
+                  </Box>
+                  <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                      <Box sx={{ 
+                        p: 2.5, 
+                        bgcolor: '#e3f2fd', 
+                        borderRadius: 2,
+                        textAlign: 'center',
+                        transition: 'all 0.3s',
+                        '&:hover': {
+                          transform: 'translateY(-4px)',
+                          boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)'
+                        }
+                      }}>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#1976d2', mb: 0.5 }}>
+                          {formatNumber(dashboardData.inventory.total_products)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Total Products
+                        </Typography>
+                      </Box>
                     </Grid>
-                    <Grid item xs={3}>
-                      <Typography variant="h5" color="warning.main">
-                        {formatNumber(dashboardData.inventory.low_stock_items)}
-                      </Typography>
-                      <Typography variant="caption">Low Stock</Typography>
+                    <Grid item xs={6}>
+                      <Box sx={{ 
+                        p: 2.5, 
+                        bgcolor: '#fff3e0', 
+                        borderRadius: 2,
+                        textAlign: 'center',
+                        transition: 'all 0.3s',
+                        '&:hover': {
+                          transform: 'translateY(-4px)',
+                          boxShadow: '0 4px 12px rgba(255, 152, 0, 0.15)'
+                        }
+                      }}>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#f57c00', mb: 0.5 }}>
+                          {formatNumber(dashboardData.inventory.low_stock_items)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Low Stock
+                        </Typography>
+                      </Box>
                     </Grid>
-                    <Grid item xs={3}>
-                      <Typography variant="h5" color="error.main">
-                        {formatNumber(dashboardData.inventory.out_of_stock_items)}
-                      </Typography>
-                      <Typography variant="caption">Out of Stock</Typography>
+                    <Grid item xs={6}>
+                      <Box sx={{ 
+                        p: 2.5, 
+                        bgcolor: '#ffebee', 
+                        borderRadius: 2,
+                        textAlign: 'center',
+                        transition: 'all 0.3s',
+                        '&:hover': {
+                          transform: 'translateY(-4px)',
+                          boxShadow: '0 4px 12px rgba(211, 47, 47, 0.15)'
+                        }
+                      }}>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#d32f2f', mb: 0.5 }}>
+                          {formatNumber(dashboardData.inventory.out_of_stock_items)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Out of Stock
+                        </Typography>
+                      </Box>
                     </Grid>
-                    <Grid item xs={3}>
-                      <Typography variant="h5" color="success.main">
-                        {formatCurrency(dashboardData.inventory.inventory_value)}
-                      </Typography>
-                      <Typography variant="caption">Total Value</Typography>
+                    <Grid item xs={6}>
+                      <Box sx={{ 
+                        p: 2.5, 
+                        bgcolor: '#e8f5e9', 
+                        borderRadius: 2,
+                        textAlign: 'center',
+                        transition: 'all 0.3s',
+                        '&:hover': {
+                          transform: 'translateY(-4px)',
+                          boxShadow: '0 4px 12px rgba(46, 125, 50, 0.15)'
+                        }
+                      }}>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#2e7d32', mb: 0.5 }}>
+                          {formatCurrency(dashboardData.inventory.inventory_value)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Total Value
+                        </Typography>
+                      </Box>
                     </Grid>
                   </Grid>
                 </CardContent>
@@ -624,29 +1032,76 @@ const Reports: React.FC = () => {
 
             {/* Supplier Metrics */}
             <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Supplier Metrics
-                  </Typography>
-                  <Grid container spacing={2} sx={{ textAlign: 'center' }}>
-                    <Grid item xs={4}>
-                      <Typography variant="h5" color="primary">
-                        {formatNumber(dashboardData.suppliers.total_suppliers)}
-                      </Typography>
-                      <Typography variant="caption">Active Suppliers</Typography>
+              <Card sx={{ boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRadius: 2 }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Box sx={{ mb: 2.5 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>
+                      Supplier Metrics
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Procurement overview
+                    </Typography>
+                  </Box>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12}>
+                      <Box sx={{ 
+                        p: 2.5, 
+                        bgcolor: '#f3e5f5', 
+                        borderRadius: 2,
+                        textAlign: 'center',
+                        transition: 'all 0.3s',
+                        '&:hover': {
+                          transform: 'translateY(-4px)',
+                          boxShadow: '0 4px 12px rgba(156, 39, 176, 0.15)'
+                        }
+                      }}>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#7b1fa2', mb: 0.5 }}>
+                          {formatNumber(dashboardData.suppliers.total_suppliers)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Active Suppliers
+                        </Typography>
+                      </Box>
                     </Grid>
-                    <Grid item xs={4}>
-                      <Typography variant="h5" color="info.main">
-                        {formatNumber(dashboardData.suppliers.total_purchase_orders)}
-                      </Typography>
-                      <Typography variant="caption">Purchase Orders</Typography>
+                    <Grid item xs={6}>
+                      <Box sx={{ 
+                        p: 2.5, 
+                        bgcolor: '#e1f5fe', 
+                        borderRadius: 2,
+                        textAlign: 'center',
+                        transition: 'all 0.3s',
+                        '&:hover': {
+                          transform: 'translateY(-4px)',
+                          boxShadow: '0 4px 12px rgba(2, 136, 209, 0.15)'
+                        }
+                      }}>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#0288d1', mb: 0.5 }}>
+                          {formatNumber(dashboardData.suppliers.total_purchase_orders)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Purchase Orders
+                        </Typography>
+                      </Box>
                     </Grid>
-                    <Grid item xs={4}>
-                      <Typography variant="h5" color="success.main">
-                        {formatCurrency(dashboardData.suppliers.total_spent)}
-                      </Typography>
-                      <Typography variant="caption">Total Spent</Typography>
+                    <Grid item xs={6}>
+                      <Box sx={{ 
+                        p: 2.5, 
+                        bgcolor: '#e8f5e9', 
+                        borderRadius: 2,
+                        textAlign: 'center',
+                        transition: 'all 0.3s',
+                        '&:hover': {
+                          transform: 'translateY(-4px)',
+                          boxShadow: '0 4px 12px rgba(46, 125, 50, 0.15)'
+                        }
+                      }}>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#2e7d32', mb: 0.5 }}>
+                          {formatCurrency(dashboardData.suppliers.total_spent)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Total Spent
+                        </Typography>
+                      </Box>
                     </Grid>
                   </Grid>
                 </CardContent>
@@ -1076,12 +1531,19 @@ const Reports: React.FC = () => {
 
         {/* Loading State */}
         {loading && (
-          <Box sx={{ textAlign: 'center', py: 8 }}>
-            <CircularProgress size={40} />
-            <Typography variant="h6" color="text.secondary" sx={{ mt: 2 }}>
-              Loading {activeTab === 0 ? 'dashboard' : activeTab === 1 ? 'sales' : activeTab === 2 ? 'inventory' : activeTab === 3 ? 'profitability' : 'supplier'} data...
-            </Typography>
-          </Box>
+          <Card sx={{ boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRadius: 2 }}>
+            <CardContent>
+              <Box sx={{ textAlign: 'center', py: 8 }}>
+                <CircularProgress size={48} thickness={4} />
+                <Typography variant="h6" color="text.secondary" sx={{ mt: 3, fontWeight: 500 }}>
+                  Loading {activeTab === 0 ? 'dashboard' : activeTab === 1 ? 'sales' : activeTab === 2 ? 'inventory' : activeTab === 3 ? 'profitability' : 'supplier'} data...
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Please wait while we fetch your reports
+                </Typography>
+              </Box>
+            </CardContent>
+          </Card>
         )}
 
         {/* No Data State */}
@@ -1092,13 +1554,21 @@ const Reports: React.FC = () => {
           (activeTab === 3 && !profitabilityData) ||
           (activeTab === 4 && !supplierData)
         ) && (
-          <Box sx={{ textAlign: 'center', py: 8 }}>
-            <Typography variant="h6" color="text.secondary">
-              No data available for the selected date range.
-            </Typography>
-          </Box>
+          <Card sx={{ boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRadius: 2 }}>
+            <CardContent>
+              <Box sx={{ textAlign: 'center', py: 8 }}>
+                <AssessmentIcon sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
+                <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                  No data available
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Try adjusting your date range or check back later
+                </Typography>
+              </Box>
+            </CardContent>
+          </Card>
         )}
-      </PageContainer>
+      </Box>
     </LocalizationProvider>
     </ErrorBoundary>
   );

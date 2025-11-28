@@ -72,7 +72,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Inventory', icon: <Inventory2Outlined />, path: '/inventory', roles: ['admin', 'manager'] },
     { text: 'Sales', icon: <ListAltOutlined />, path: '/sales', roles: ['admin', 'manager', 'cashier'] },
     { text: 'Suppliers', icon: <LocalShippingOutlined />, path: '/suppliers', roles: ['admin', 'manager'] },
-    { text: 'Purchase Orders', icon: <ReceiptLongOutlined />, path: '/purchase-orders', roles: ['admin', 'manager'] },
     { text: 'Reports', icon: <ListAltOutlined />, path: '/reports', roles: ['admin', 'manager'] },
     { text: 'Customers', icon: <PeopleOutlined />, path: '/customers', roles: ['admin', 'manager', 'cashier'] },
     { text: 'Expenses', icon: <ReceiptOutlined />, path: '/expenses', roles: ['admin', 'manager', 'cashier'] },

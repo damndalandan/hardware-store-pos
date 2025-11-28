@@ -117,22 +117,23 @@ const POS: React.FC = () => {
   }, []);
 
   // Fetch customers for autocomplete
-  useEffect(() => {
-    const fetchCustomers = async () => {
-      try {
-        const response = await fetch('/api/customers', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setCustomers(data.customers || []);
+  const fetchCustomers = async () => {
+    try {
+      const response = await fetch('/api/customers', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
-      } catch (error) {
-        console.error('Failed to fetch customers:', error);
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCustomers(data.customers || []);
       }
-    };
+    } catch (error) {
+      console.error('Failed to fetch customers:', error);
+    }
+  };
+
+  useEffect(() => {
     fetchCustomers();
   }, []);
 

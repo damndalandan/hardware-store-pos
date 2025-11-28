@@ -5,7 +5,7 @@ import {
   Chip, Alert, Snackbar, Tooltip, IconButton, Tab, Tabs, Paper,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Accordion, AccordionSummary, AccordionDetails, Divider, LinearProgress,
-  Menu, MenuItem as MuiMenuItem, Checkbox, List, ListItem, RadioGroup, FormControlLabel, Radio,
+  Menu, Checkbox, List, ListItem, RadioGroup, FormControlLabel, Radio,
   ListItemButton, ListItemText, Badge, Stack, InputAdornment
 } from '@mui/material';
 import {
@@ -53,7 +53,7 @@ interface Supplier {
 interface SupplierDetail extends Supplier {
   recentOrders: Array<{
     id: number;
-    order_number: string;
+    po_number: string;
     order_date: string;
     status: string;
     total_amount: number;
@@ -80,6 +80,7 @@ interface PurchaseOrder {
   payment_status: 'Unpaid' | 'Paid this month' | 'To be paid next month' | 'Partially Paid';
   receiving_status: 'Awaiting' | 'Partially Received' | 'Received';
   total_amount: number;
+  paid_amount?: number;
   items_summary: string;
   notes?: string;
 }
@@ -92,10 +93,6 @@ const Suppliers: React.FC = () => {
   // Single-line truncate style for table cells
   const truncateSx = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } as const;
   const [activeTab, setActiveTab] = useState(0);
-  // dynamic supplier tabs: each tab shows products for a supplier
-  const [supplierTabs, setSupplierTabs] = useState<Array<{ id: number; name: string }>>([]);
-  const [activeSupplierTabIndex, setActiveSupplierTabIndex] = useState<number | null>(null);
-  const [supplierProducts, setSupplierProducts] = useState<Record<number, SupplierDetail['products']>>({});
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(false);
@@ -115,6 +112,9 @@ const Suppliers: React.FC = () => {
   
   // Receiving dialog states
   const [receiveDialog, setReceiveDialog] = useState(false);
+  const [closePODialog, setClosePODialog] = useState(false);
+  const [closePOReason, setClosePOReason] = useState('');
+  const [poToClose, setPoToClose] = useState<PurchaseOrder | null>(null);
   const [receivingItems, setReceivingItems] = useState<Array<{
     id: number;
     product_id: number;
@@ -130,7 +130,7 @@ const Suppliers: React.FC = () => {
   const [paymentNotes, setPaymentNotes] = useState('');
   
   // Receive Items tab states
-  const [selectedReceivePO, setSelectedReceivePO] = useState<number | null>(null);
+  const [selectedReceivePO, setSelectedReceivePO] = useState<number | null | 'summary'>(null);
   const [receivePOItems, setReceivePOItems] = useState<Array<{
     id: number;
     product_id: number;
@@ -144,7 +144,7 @@ const Suppliers: React.FC = () => {
   }>>([]);
   
   // Make Payment tab states
-  const [selectedPaymentPO, setSelectedPaymentPO] = useState<number | null>(null);
+  const [selectedPaymentPO, setSelectedPaymentPO] = useState<number | null | 'summary'>(null);
   const [paymentPODetails, setPaymentPODetails] = useState<any>(null);
   
   // PO Form states
@@ -160,7 +160,7 @@ const Suppliers: React.FC = () => {
   // PO filters for right pane
   const [poPaymentFilter, setPoPaymentFilter] = useState<'all' | 'unpaid' | 'paid' | 'partial'>('all');
   const [poStatusFilter, setPoStatusFilter] = useState<'all' | 'open' | 'partial' | 'received' | 'closed'>('all');
-  const [rightTab, setRightTab] = useState(0); // 0: POs, 1: Inventory History
+  const [rightTab, setRightTab] = useState<number>(0); // 0: POs, 1: Receive Items, 2: Make Payment, 3: Inventory History
   const isSupplierDetail = (s: Supplier | SupplierDetail | null): s is SupplierDetail => {
     return !!s && (s as SupplierDetail).recentOrders !== undefined && (s as SupplierDetail).products !== undefined;
   };
@@ -437,38 +437,6 @@ const Suppliers: React.FC = () => {
   };
 
   // Open receive dialog and fetch PO items
-  const handleOpenReceiveDialog = async (po: PurchaseOrder) => {
-    try {
-      setLoading(true);
-      // Fetch full PO details including items
-      const response = await axios.get(`/api/purchase-orders/${po.id}`);
-      const poData = response.data;
-      
-      // Set up receiving items
-      const items = poData.items.map((item: any) => ({
-        id: item.id,
-        product_id: item.product_id,
-        product_name: item.product_name,
-        ordered_quantity: item.quantity,
-        received_quantity: item.received_quantity || 0,
-        receiving_now: Math.max(0, item.quantity - (item.received_quantity || 0))
-      }));
-      
-      setReceivingItems(items);
-      setPaymentAmount(poData.total_amount - (poData.paid_amount || 0));
-      setPaymentMethod('cash');
-      setPaymentNotes('');
-      setSelectedPO(po);
-      setReceiveDialog(true);
-      
-    } catch (error) {
-      console.error('Failed to fetch PO details:', error);
-      showNotification('Failed to load purchase order details', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Handle receiving items
   const handleReceiveItems = async () => {
     if (!selectedPO) return;
@@ -501,19 +469,35 @@ const Suppliers: React.FC = () => {
         };
       }
 
-      await axios.post(`/api/purchase-orders/${selectedPO.id}/receive`, receiveData);
+      const response = await axios.post(`/api/purchase-orders/${selectedPO.id}/receive`, receiveData);
 
-      showNotification('Items received successfully', 'success');
+      showNotification(response.data.message || 'Items received successfully', 'success');
+      
+      // Update selectedPO with new statuses from response
+      if (response.data) {
+        setSelectedPO(prev => prev ? {
+          ...prev,
+          receiving_status: response.data.receiving_status || prev.receiving_status,
+          payment_status: response.data.payment_status || prev.payment_status,
+          paid_amount: response.data.paid_amount !== undefined ? response.data.paid_amount : prev.paid_amount
+        } : null);
+      }
       
       // Reset and refresh
       setReceiveDialog(false);
       setReceivingItems([]);
       setPaymentAmount(0);
       setPaymentNotes('');
+      setPaymentMethod('cash');
       
+      // Force refresh purchase orders and supplier details
       if (selectedSupplier) {
-        fetchPurchaseOrders(selectedSupplier.id);
+        await fetchPurchaseOrders(selectedSupplier.id);
+        await fetchSupplierDetail(selectedSupplier.id);
       }
+      
+      // Also refresh the main suppliers list to update statistics
+      await fetchSuppliers();
 
     } catch (error) {
       console.error('Failed to receive items:', error);
@@ -521,6 +505,42 @@ const Suppliers: React.FC = () => {
         axios.isAxiosError(error)
           ? error.response?.data?.message || 'Failed to receive items'
           : 'Failed to receive items',
+        'error'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle closing PO manually
+  const handleClosePO = async () => {
+    if (!poToClose) return;
+
+    try {
+      setLoading(true);
+      const response = await axios.post(`/api/purchase-orders/${poToClose.id}/close`, {
+        reason: closePOReason
+      });
+
+      showNotification(response.data.message || 'Purchase order closed successfully', 'success');
+      
+      setClosePODialog(false);
+      setPoToClose(null);
+      setClosePOReason('');
+      
+      // Refresh data
+      if (selectedSupplier) {
+        await fetchPurchaseOrders(selectedSupplier.id);
+        await fetchSupplierDetail(selectedSupplier.id);
+      }
+      await fetchSuppliers();
+
+    } catch (error) {
+      console.error('Failed to close purchase order:', error);
+      showNotification(
+        axios.isAxiosError(error)
+          ? error.response?.data?.message || 'Failed to close purchase order'
+          : 'Failed to close purchase order',
         'error'
       );
     } finally {
@@ -538,22 +558,28 @@ const Suppliers: React.FC = () => {
     try {
       setLoading(true);
 
-      await axios.post(`/api/purchase-orders/${selectedPO.id}/payment`, {
+      const response = await axios.post(`/api/purchase-orders/${selectedPO.id}/payment`, {
         amount: paymentAmount,
         payment_method: paymentMethod,
         notes: paymentNotes
       });
 
-      showNotification('Payment recorded successfully', 'success');
+      showNotification(response.data.message || 'Payment recorded successfully', 'success');
       
       // Reset and refresh
       setPoDetailDialog(false);
       setPaymentAmount(0);
       setPaymentNotes('');
+      setPaymentMethod('cash');
       
+      // Force refresh purchase orders and supplier details
       if (selectedSupplier) {
-        fetchPurchaseOrders(selectedSupplier.id);
+        await fetchPurchaseOrders(selectedSupplier.id);
+        await fetchSupplierDetail(selectedSupplier.id);
       }
+      
+      // Also refresh the main suppliers list to update statistics
+      await fetchSuppliers();
 
     } catch (error) {
       console.error('Failed to record payment:', error);
@@ -624,55 +650,7 @@ const Suppliers: React.FC = () => {
     }
   };
 
-  const openSupplierTab = async (supplierId: number, supplierName: string) => {
-    // If already open, switch to it
-    const existingIndex = supplierTabs.findIndex(s => s.id === supplierId);
-    if (existingIndex !== -1) {
-      setActiveSupplierTabIndex(existingIndex);
-      setActiveTab(1); // switch to supplier tabs area (we'll render at index 1)
-      return;
-    }
 
-    // add to tabs
-    const next = [...supplierTabs, { id: supplierId, name: supplierName }];
-    setSupplierTabs(next);
-    const newIndex = next.length - 1;
-    setActiveSupplierTabIndex(newIndex);
-    setActiveTab(1);
-
-    // fetch supplier details (includes products) from existing backend endpoint
-    try {
-      setLoading(true);
-      const resp = await axios.get(`${API_BASE_URL}/suppliers/${supplierId}`);
-      setSupplierProducts(prev => ({ ...prev, [supplierId]: resp.data.products || [] }));
-    } catch (err) {
-      console.error('Failed to fetch supplier products', err);
-      showNotification('Failed to fetch supplier products', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const closeSupplierTab = (index: number) => {
-    const next = [...supplierTabs];
-    const removed = next.splice(index, 1)[0];
-    setSupplierTabs(next);
-    // remove cached products
-    setSupplierProducts(prev => {
-      const copy = { ...prev };
-      delete copy[removed.id];
-      return copy;
-    });
-    // adjust active index
-    if (next.length === 0) {
-      setActiveSupplierTabIndex(null);
-      setActiveTab(0);
-    } else if (index <= (activeSupplierTabIndex ?? -1)) {
-      const newIndex = Math.max(0, (activeSupplierTabIndex ?? 1) - 1);
-      setActiveSupplierTabIndex(newIndex);
-      setActiveTab(1);
-    }
-  };
 
   const handleSaveSupplier = async () => {
     if (!editingSupplier) return;
@@ -888,40 +866,7 @@ const Suppliers: React.FC = () => {
         '& .MuiDataGrid-root .MuiDataGrid-cell, & .MuiDataGrid-root .MuiDataGrid-columnHeader': { fontSize: '14px !important' }
       }}
     >
-        {/* Tabs */}
-        <Box sx={{ mb: 3 }}>
-          <Tabs
-            value={activeTab}
-            onChange={(e, newValue) => {
-              setActiveTab(newValue);
-              if (newValue >= 1) {
-                setActiveSupplierTabIndex(newValue - 1);
-              } else {
-                setActiveSupplierTabIndex(null);
-              }
-            }}
-            sx={{ '& .MuiTab-root': { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }}
-          >
-            <Tab label="Supplier Directory" icon={<BusinessIcon />} sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
-            {supplierTabs.map((s, idx) => (
-              <Tab
-                key={s.id}
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography sx={{ maxWidth: 160, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</Typography>
-                    <IconButton size="small" onClick={(ev) => { ev.stopPropagation(); closeSupplierTab(idx); }} aria-label={`Close ${s.name}`}>
-                      <CloseIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                }
-                sx={{ textTransform: 'none' }}
-              />
-            ))}
-          </Tabs>
-        </Box>
-
-        {/* Toolbar (only show on Supplier Directory tab) */}
-        {activeTab === 0 && (
+        {/* Toolbar (only show on main view) */}
         <Card sx={{ mb: 3, display: 'none' }}>
           <CardContent>
             <Grid container spacing={2} alignItems="center">
@@ -1002,14 +947,12 @@ const Suppliers: React.FC = () => {
             </Grid>
           </CardContent>
         </Card>
-        )}
 
         {/* Content based on active tab */}
-        {activeTab === 0 && (
-          <Grid container spacing={3}>
+        <Grid container spacing={3}>
             {/* Left Pane - Suppliers List */}
             <Grid item xs={12} md={3}>
-              <Card sx={{ height: 'calc(100vh - 130px)', display: 'flex', flexDirection: 'column' }}>
+              <Card sx={{ height: 'calc(100vh - 50px)', display: 'flex', flexDirection: 'column' }}>
                 <CardContent sx={{ p: 2, pb: 1 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                     <Typography variant="h6" sx={{ fontWeight: 600 }}>
@@ -1164,7 +1107,7 @@ const Suppliers: React.FC = () => {
 
             {/* Right Pane - Purchase Orders / Inventory History */}
             <Grid item xs={12} md={9}>
-              <Card sx={{ height: 'calc(100vh - 130px)', display: 'flex', flexDirection: 'column' }}>
+              <Card sx={{ height: 'calc(100vh - 50px)', display: 'flex', flexDirection: 'column' }}>
                 {selectedSupplier ? (
                   <>
                     <CardContent sx={{ p: 2, pb: 1 }}>
@@ -1188,7 +1131,17 @@ const Suppliers: React.FC = () => {
                       </Box>
 
                       {/* Tabs */}
-                      <Tabs value={rightTab} onChange={(e, v) => setRightTab(v)}>
+                      <Tabs value={rightTab} onChange={(e, v) => {
+                        setRightTab(v);
+                        // Set summary as default when switching to Receive Items or Make Payment tabs
+                        if (v === 1) {
+                          setSelectedReceivePO('summary');
+                          setReceivePOItems([]);
+                        } else if (v === 2) {
+                          setSelectedPaymentPO('summary');
+                          setPaymentPODetails(null);
+                        }
+                      }}>
                         <Tab label="Purchase Orders" />
                         <Tab label="Receive Items" icon={<InventoryIcon fontSize="small" />} iconPosition="start" />
                         <Tab label="Make Payment" icon={<PaymentIcon fontSize="small" />} iconPosition="start" />
@@ -1314,64 +1267,294 @@ const Suppliers: React.FC = () => {
 
                     {/* Receive Items Tab */}
                     {rightTab === 1 && (
-                      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-                        <Typography variant="h6" gutterBottom>
-                          Receive Items from Purchase Orders
-                        </Typography>
-                        
-                        {/* PO Selection */}
-                        <FormControl fullWidth sx={{ mb: 3, maxWidth: 400 }}>
-                          <InputLabel>Select Purchase Order</InputLabel>
-                          <Select
-                            value={selectedReceivePO || ''}
-                            label="Select Purchase Order"
-                            onChange={async (e) => {
-                              const poId = Number(e.target.value);
-                              setSelectedReceivePO(poId);
-                              
-                              // Fetch PO items
-                              try {
-                                setLoading(true);
-                                const response = await axios.get(`/api/purchase-orders/${poId}`);
-                                const poData = response.data;
-                                
-                                const items = poData.items.map((item: any) => ({
-                                  id: item.id,
-                                  product_id: item.product_id,
-                                  product_name: item.product_name,
-                                  ordered_quantity: item.quantity,
-                                  received_quantity: item.received_quantity || 0,
-                                  unit_price: item.unit_cost,
-                                  actual_price: item.unit_cost,
-                                  to_receive: Math.max(0, item.quantity - (item.received_quantity || 0)),
-                                  checked: false
-                                }));
-                                
-                                setReceivePOItems(items);
-                              } catch (error) {
-                                console.error('Failed to fetch PO items:', error);
-                                showNotification('Failed to load purchase order items', 'error');
-                              } finally {
-                                setLoading(false);
-                              }
-                            }}
-                          >
-                            {purchaseOrders
-                              .filter(po => po.receiving_status !== 'Received')
-                              .map(po => (
-                                <MenuItem key={po.id} value={po.id}>
-                                  {po.po_number} - {formatDate(po.order_date)} ({formatCurrency(po.total_amount)})
-                                </MenuItem>
+                      <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                        {/* Left Side - PO List */}
+                        <Box sx={{ width: 250, borderRight: '1px solid', borderColor: 'divider', overflow: 'auto' }}>
+                          <List dense>
+                            {/* Summary Item - Always at top */}
+                            <ListItem disablePadding>
+                              <ListItemButton
+                                selected={selectedReceivePO === 'summary'}
+                                onClick={() => {
+                                  setSelectedReceivePO('summary');
+                                  setReceivePOItems([]);
+                                }}
+                                sx={{
+                                  borderRadius: 1,
+                                  mx: 1,
+                                  my: 0.5,
+                                  bgcolor: 'primary.main',
+                                  color: 'white',
+                                  '&:hover': {
+                                    bgcolor: 'primary.dark',
+                                  },
+                                  '&.Mui-selected': {
+                                    bgcolor: 'primary.dark',
+                                    '&:hover': {
+                                      bgcolor: 'primary.dark',
+                                    }
+                                  }
+                                }}
+                              >
+                                <ListItemText
+                                  primary={
+                                    <Typography variant="body2" sx={{ fontWeight: 600, color: 'white' }}>
+                                      Purchase Orders
+                                    </Typography>
+                                  }
+                                  secondary={
+                                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)' }}>
+                                      View Summary
+                                    </Typography>
+                                  }
+                                />
+                              </ListItemButton>
+                            </ListItem>
+                            
+                            <Divider sx={{ my: 1 }} />
+                            {purchaseOrders.map(po => (
+                                <ListItem
+                                  key={po.id}
+                                  disablePadding
+                                >
+                                  <ListItemButton
+                                    selected={selectedReceivePO === po.id}
+                                    onClick={async () => {
+                                      setSelectedReceivePO(po.id);
+                                      
+                                      // Fetch PO items
+                                      try {
+                                        setLoading(true);
+                                        const response = await axios.get(`/api/purchase-orders/${po.id}`);
+                                        const poData = response.data;
+                                        
+                                        const items = poData.items.map((item: any) => ({
+                                          id: item.id,
+                                          product_id: item.product_id,
+                                          product_name: item.product_name,
+                                          ordered_quantity: item.quantity,
+                                          received_quantity: item.received_quantity || 0,
+                                          unit_price: item.unit_cost,
+                                          actual_price: item.unit_cost,
+                                          to_receive: Math.max(0, item.quantity - (item.received_quantity || 0)),
+                                          checked: false
+                                        }));
+                                        
+                                        setReceivePOItems(items);
+                                      } catch (error) {
+                                        console.error('Failed to fetch PO items:', error);
+                                        showNotification('Failed to load purchase order items', 'error');
+                                      } finally {
+                                        setLoading(false);
+                                      }
+                                    }}
+                                    sx={{
+                                      borderRadius: 1,
+                                      mx: 1,
+                                      my: 0.5,
+                                      '&.Mui-selected': {
+                                        backgroundColor: 'primary.light',
+                                        '&:hover': {
+                                          backgroundColor: 'primary.light',
+                                        }
+                                      }
+                                    }}
+                                  >
+                                    <ListItemText
+                                      primary={
+                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                            {po.po_number}
+                                          </Typography>
+                                          <Chip
+                                            label={po.receiving_status}
+                                            size="small"
+                                            color={getReceivingStatusColor(po.receiving_status)}
+                                            sx={{ height: 18, fontSize: 9 }}
+                                          />
+                                        </Box>
+                                      }
+                                      secondary={
+                                        <Box>
+                                          <Typography variant="caption" display="block" color="text.secondary">
+                                            {formatDate(po.order_date)}
+                                          </Typography>
+                                          <Typography variant="caption" display="block" sx={{ fontWeight: 600, color: 'primary.main' }}>
+                                            {formatCurrency(po.total_amount)}
+                                          </Typography>
+                                        </Box>
+                                      }
+                                    />
+                                  </ListItemButton>
+                                </ListItem>
                               ))}
-                          </Select>
-                        </FormControl>
+                            {purchaseOrders.filter(po => po.receiving_status !== 'Received').length === 0 && (
+                              <Box sx={{ p: 3, textAlign: 'center' }}>
+                                <Typography variant="body2" color="text.secondary">
+                                  No purchase orders to receive
+                                </Typography>
+                              </Box>
+                            )}
+                          </List>
+                        </Box>
 
-                        {/* Items Table */}
-                        {selectedReceivePO && receivePOItems.length > 0 && (
-                          <>
-                            <TableContainer component={Paper} variant="outlined">
-                              <Table size="small">
-                                <TableHead>
+                        {/* Right Side - Items Details */}
+                        <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+                          {selectedReceivePO === 'summary' ? (
+                            <Box sx={{ p: 3 }}>
+                              {/* Header */}
+                              <Box sx={{ mb: 3, pb: 2, borderBottom: '2px solid', borderColor: 'divider' }}>
+                                <Typography variant="h5" sx={{ fontWeight: 600 }}>Receiving Status Report</Typography>
+                                <Typography variant="body2" color="text.secondary">Purchase Order Receiving Overview</Typography>
+                              </Box>
+
+                              {/* Stats Cards */}
+                              <Grid container spacing={2} sx={{ mb: 3 }}>
+                                <Grid item xs={12} md={4}>
+                                  <Card sx={{ p: 1.5, bgcolor: '#e8f5e9', borderLeft: '4px solid #4caf50' }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                                      Received
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#2e7d32' }}>
+                                        {purchaseOrders.filter(po => po.receiving_status === 'Received').length}
+                                      </Typography>
+                                      <Typography variant="body2" color="text.secondary">orders</Typography>
+                                    </Box>
+                                    <Typography variant="body1" sx={{ mt: 0.5, color: '#2e7d32', fontWeight: 600 }}>
+                                      {formatCurrency(
+                                        purchaseOrders.filter(po => po.receiving_status === 'Received')
+                                          .reduce((sum, po) => sum + po.total_amount, 0)
+                                      )}
+                                    </Typography>
+                                  </Card>
+                                </Grid>
+                                <Grid item xs={12} md={4}>
+                                  <Card sx={{ p: 1.5, bgcolor: '#fff3e0', borderLeft: '4px solid #ff9800' }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                                      Unreceived
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#e65100' }}>
+                                        {purchaseOrders.filter(po => po.receiving_status === 'Awaiting' || po.receiving_status === 'Partially Received').length}
+                                      </Typography>
+                                      <Typography variant="body2" color="text.secondary">pending</Typography>
+                                    </Box>
+                                    <Typography variant="body1" sx={{ mt: 0.5, color: '#e65100', fontWeight: 600 }}>
+                                      {formatCurrency(
+                                        purchaseOrders.filter(po => po.receiving_status === 'Awaiting' || po.receiving_status === 'Partially Received')
+                                          .reduce((sum, po) => sum + po.total_amount, 0)
+                                      )}
+                                    </Typography>
+                                  </Card>
+                                </Grid>
+                                <Grid item xs={12} md={4}>
+                                  <Card sx={{ p: 1.5, bgcolor: '#e3f2fd', borderLeft: '4px solid #2196f3' }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                                      Total Orders
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#1565c0' }}>
+                                        {purchaseOrders.length}
+                                      </Typography>
+                                      <Typography variant="body2" color="text.secondary">orders</Typography>
+                                    </Box>
+                                    <Typography variant="body1" sx={{ mt: 0.5, color: '#1565c0', fontWeight: 600 }}>
+                                      {formatCurrency(purchaseOrders.reduce((sum, po) => sum + po.total_amount, 0))}
+                                    </Typography>
+                                  </Card>
+                                </Grid>
+                              </Grid>
+
+                              {/* Breakdown Table */}
+                              <Card sx={{ p: 2 }}>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Detailed Breakdown</Typography>
+                                <TableContainer>
+                                  <Table size="small">
+                                    <TableHead>
+                                      <TableRow>
+                                        <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>Count</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>Total Amount</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>Percentage</TableCell>
+                                      </TableRow>
+                                    </TableHead>
+                                    <TableBody>
+                                      <TableRow>
+                                        <TableCell>
+                                          <Chip label="Received" size="small" color="success" sx={{ minWidth: 100 }} />
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.filter(po => po.receiving_status === 'Received').length}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {formatCurrency(
+                                            purchaseOrders.filter(po => po.receiving_status === 'Received')
+                                              .reduce((sum, po) => sum + po.total_amount, 0)
+                                          )}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.length > 0
+                                            ? ((purchaseOrders.filter(po => po.receiving_status === 'Received').length / purchaseOrders.length) * 100).toFixed(1)
+                                            : 0}%
+                                        </TableCell>
+                                      </TableRow>
+                                      <TableRow>
+                                        <TableCell>
+                                          <Chip label="Partially Received" size="small" color="warning" sx={{ minWidth: 100 }} />
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.filter(po => po.receiving_status === 'Partially Received').length}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {formatCurrency(
+                                            purchaseOrders.filter(po => po.receiving_status === 'Partially Received')
+                                              .reduce((sum, po) => sum + po.total_amount, 0)
+                                          )}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.length > 0
+                                            ? ((purchaseOrders.filter(po => po.receiving_status === 'Partially Received').length / purchaseOrders.length) * 100).toFixed(1)
+                                            : 0}%
+                                        </TableCell>
+                                      </TableRow>
+                                      <TableRow>
+                                        <TableCell>
+                                          <Chip label="Awaiting" size="small" color="error" sx={{ minWidth: 100 }} />
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.filter(po => po.receiving_status === 'Awaiting').length}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {formatCurrency(
+                                            purchaseOrders.filter(po => po.receiving_status === 'Awaiting')
+                                              .reduce((sum, po) => sum + po.total_amount, 0)
+                                          )}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.length > 0
+                                            ? ((purchaseOrders.filter(po => po.receiving_status === 'Awaiting').length / purchaseOrders.length) * 100).toFixed(1)
+                                            : 0}%
+                                        </TableCell>
+                                      </TableRow>
+                                      <TableRow sx={{ bgcolor: '#f5f5f5' }}>
+                                        <TableCell sx={{ fontWeight: 600 }}>Total</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>{purchaseOrders.length}</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>
+                                          {formatCurrency(purchaseOrders.reduce((sum, po) => sum + po.total_amount, 0))}
+                                        </TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>100%</TableCell>
+                                      </TableRow>
+                                    </TableBody>
+                                  </Table>
+                                </TableContainer>
+                              </Card>
+                            </Box>
+                          ) : selectedReceivePO && receivePOItems.length > 0 ? (
+                            <Box>
+                              <TableContainer component={Paper} variant="outlined">
+                                <Table size="small">
+                                  <TableHead>
                                   <TableRow>
                                     <TableCell padding="checkbox">
                                       <Checkbox
@@ -1420,11 +1603,24 @@ const Suppliers: React.FC = () => {
                                           size="small"
                                           value={item.to_receive}
                                           disabled={!item.checked}
+                                          onFocus={(e) => {
+                                            // Clear the field if it's 0
+                                            if (item.to_receive === 0) {
+                                              e.target.select();
+                                            }
+                                          }}
                                           onChange={(e) => {
-                                            const value = Math.max(0, Math.min(
-                                              Number(e.target.value),
-                                              item.ordered_quantity - item.received_quantity
-                                            ));
+                                            const inputValue = e.target.value;
+                                            // Allow empty string for clearing
+                                            if (inputValue === '') {
+                                              const newItems = [...receivePOItems];
+                                              newItems[index].to_receive = 0;
+                                              setReceivePOItems(newItems);
+                                              return;
+                                            }
+                                            // Calculate remaining quantity (cannot exceed)
+                                            const remaining = item.ordered_quantity - item.received_quantity;
+                                            const value = Math.max(0, Math.min(Number(inputValue), remaining));
                                             const newItems = [...receivePOItems];
                                             newItems[index].to_receive = value;
                                             setReceivePOItems(newItems);
@@ -1491,21 +1687,37 @@ const Suppliers: React.FC = () => {
                             </Box>
 
                             {/* Action Buttons */}
-                            <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                            <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'space-between' }}>
                               <Button
                                 variant="outlined"
+                                color="warning"
+                                startIcon={<CloseIcon />}
+                                disabled={loading}
                                 onClick={() => {
-                                  setSelectedReceivePO(null);
-                                  setReceivePOItems([]);
+                                  const po = purchaseOrders.find(p => p.id === selectedReceivePO);
+                                  if (po) {
+                                    setPoToClose(po);
+                                    setClosePODialog(true);
+                                  }
                                 }}
                               >
-                                Cancel
+                                Close PO
                               </Button>
-                              <Button
-                                variant="contained"
-                                startIcon={<CheckCircleIcon />}
-                                disabled={loading || !receivePOItems.some(item => item.checked && item.to_receive > 0)}
-                                onClick={async () => {
+                              <Box sx={{ display: 'flex', gap: 2 }}>
+                                <Button
+                                  variant="outlined"
+                                  onClick={() => {
+                                    setSelectedReceivePO(null);
+                                    setReceivePOItems([]);
+                                  }}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  variant="outlined"
+                                  startIcon={<CheckCircleIcon />}
+                                  disabled={loading || !receivePOItems.some(item => item.checked && item.to_receive > 0)}
+                                  onClick={async () => {
                                   const itemsToReceive = receivePOItems.filter(item => item.checked && item.to_receive > 0);
                                   
                                   try {
@@ -1534,57 +1746,350 @@ const Suppliers: React.FC = () => {
                                   }
                                 }}
                               >
-                                Receive Selected Items
+                                Receive Only
                               </Button>
+                              <Button
+                                variant="contained"
+                                startIcon={<PaymentIcon />}
+                                disabled={loading || !receivePOItems.some(item => item.checked && item.to_receive > 0)}
+                                onClick={() => {
+                                  // Prepare receiving items for the dialog
+                                  const itemsToReceive = receivePOItems.filter(item => item.checked && item.to_receive > 0);
+                                  const totalAmount = itemsToReceive.reduce((sum, item) => sum + (item.to_receive * item.actual_price), 0);
+                                  
+                                  // Set up the dialog with selected items
+                                  setReceivingItems(itemsToReceive.map(item => ({
+                                    id: item.id,
+                                    product_id: item.product_id,
+                                    product_name: item.product_name,
+                                    ordered_quantity: item.ordered_quantity,
+                                    received_quantity: item.received_quantity,
+                                    receiving_now: item.to_receive,
+                                    unit_price: item.unit_price,
+                                    actual_price: item.actual_price
+                                  })));
+                                  setPaymentAmount(totalAmount);
+                                  
+                                  // Find the selected PO for the dialog
+                                  const po = purchaseOrders.find(p => p.id === selectedReceivePO);
+                                  if (po) {
+                                    setSelectedPO(po);
+                                  }
+                                  
+                                  setReceiveDialog(true);
+                                }}
+                                color="success"
+                              >
+                                Receive & Make Payment
+                              </Button>
+                              </Box>
                             </Box>
-                          </>
-                        )}
+                          </Box>
+                          ) : (
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                              <Typography variant="body1" color="text.secondary">
+                                {purchaseOrders.length > 0
+                                  ? 'Select a purchase order from the left to receive items'
+                                  : 'No purchase orders available for receiving'}
+                              </Typography>
+                            </Box>
+                          )}
+                        </Box>
                       </Box>
                     )}
 
                     {/* Make Payment Tab */}
                     {rightTab === 2 && (
-                      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-                        <Typography variant="h6" gutterBottom>
-                          Make Payment for Purchase Orders
-                        </Typography>
-
-                        {/* PO Selection */}
-                        <FormControl fullWidth sx={{ mb: 3, maxWidth: 400 }}>
-                          <InputLabel>Select Purchase Order</InputLabel>
-                          <Select
-                            value={selectedPaymentPO || ''}
-                            label="Select Purchase Order"
-                            onChange={async (e) => {
-                              const poId = Number(e.target.value);
-                              setSelectedPaymentPO(poId);
-                              
-                              // Fetch PO details
-                              try {
-                                setLoading(true);
-                                const response = await axios.get(`/api/purchase-orders/${poId}`);
-                                setPaymentPODetails(response.data);
-                                setPaymentAmount(response.data.total_amount - (response.data.paid_amount || 0));
-                              } catch (error) {
-                                console.error('Failed to fetch PO details:', error);
-                                showNotification('Failed to load purchase order details', 'error');
-                              } finally {
-                                setLoading(false);
-                              }
-                            }}
-                          >
-                            {purchaseOrders
-                              .filter(po => po.payment_status !== 'Paid this month')
-                              .map(po => (
-                                <MenuItem key={po.id} value={po.id}>
-                                  {po.po_number} - {formatDate(po.order_date)} ({formatCurrency(po.total_amount)})
-                                </MenuItem>
+                      <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                        {/* Left Side - PO List */}
+                        <Box sx={{ width: 250, borderRight: '1px solid', borderColor: 'divider', overflow: 'auto' }}>
+                          <List dense>
+                            {/* Summary Item - Always at top */}
+                            <ListItem disablePadding>
+                              <ListItemButton
+                                selected={selectedPaymentPO === 'summary'}
+                                onClick={() => {
+                                  setSelectedPaymentPO('summary');
+                                  setPaymentPODetails(null);
+                                }}
+                                sx={{
+                                  borderRadius: 1,
+                                  mx: 1,
+                                  my: 0.5,
+                                  bgcolor: 'primary.main',
+                                  color: 'white',
+                                  '&:hover': {
+                                    bgcolor: 'primary.dark',
+                                  },
+                                  '&.Mui-selected': {
+                                    bgcolor: 'primary.dark',
+                                    '&:hover': {
+                                      bgcolor: 'primary.dark',
+                                    }
+                                  }
+                                }}
+                              >
+                                <ListItemText
+                                  primary={
+                                    <Typography variant="body2" sx={{ fontWeight: 600, color: 'white' }}>
+                                      Purchase Orders
+                                    </Typography>
+                                  }
+                                  secondary={
+                                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)' }}>
+                                      View Summary
+                                    </Typography>
+                                  }
+                                />
+                              </ListItemButton>
+                            </ListItem>
+                            
+                            <Divider sx={{ my: 1 }} />
+                            {purchaseOrders.map(po => (
+                                <ListItem
+                                  key={po.id}
+                                  disablePadding
+                                >
+                                  <ListItemButton
+                                    selected={selectedPaymentPO === po.id}
+                                    onClick={async () => {
+                                      setSelectedPaymentPO(po.id);
+                                      
+                                      // Fetch PO details
+                                      try {
+                                        setLoading(true);
+                                        const response = await axios.get(`/api/purchase-orders/${po.id}`);
+                                        setPaymentPODetails(response.data);
+                                        setPaymentAmount(response.data.total_amount - (response.data.paid_amount || 0));
+                                      } catch (error) {
+                                        console.error('Failed to fetch PO details:', error);
+                                        showNotification('Failed to load purchase order details', 'error');
+                                      } finally {
+                                        setLoading(false);
+                                      }
+                                    }}
+                                    sx={{
+                                      borderRadius: 1,
+                                      mx: 1,
+                                      my: 0.5,
+                                      '&.Mui-selected': {
+                                        backgroundColor: 'primary.light',
+                                        '&:hover': {
+                                          backgroundColor: 'primary.light',
+                                        }
+                                      }
+                                    }}
+                                  >
+                                    <ListItemText
+                                      primary={
+                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                            {po.po_number}
+                                          </Typography>
+                                          <Chip
+                                            label={po.payment_status}
+                                            size="small"
+                                            color={getPaymentStatusColor(po.payment_status)}
+                                            sx={{ height: 18, fontSize: 9 }}
+                                          />
+                                        </Box>
+                                      }
+                                      secondary={
+                                        <Box>
+                                          <Typography variant="caption" display="block" color="text.secondary">
+                                            {formatDate(po.order_date)}
+                                          </Typography>
+                                          <Typography variant="caption" display="block" sx={{ fontWeight: 600, color: 'primary.main' }}>
+                                            {formatCurrency(po.total_amount)}
+                                          </Typography>
+                                        </Box>
+                                      }
+                                    />
+                                  </ListItemButton>
+                                </ListItem>
                               ))}
-                          </Select>
-                        </FormControl>
+                            {purchaseOrders.filter(po => po.payment_status !== 'Paid this month').length === 0 && (
+                              <Box sx={{ p: 3, textAlign: 'center' }}>
+                                <Typography variant="body2" color="text.secondary">
+                                  No purchase orders requiring payment
+                                </Typography>
+                              </Box>
+                            )}
+                          </List>
+                        </Box>
 
-                        {/* Payment Form */}
-                        {selectedPaymentPO && paymentPODetails && (
+                        {/* Right Side - Payment Form */}
+                        <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+                          {selectedPaymentPO === 'summary' ? (
+                            <Box sx={{ p: 3 }}>
+                              {/* Header */}
+                              <Box sx={{ mb: 3, pb: 2, borderBottom: '2px solid', borderColor: 'divider' }}>
+                                <Typography variant="h5" sx={{ fontWeight: 600 }}>Payment Status Report</Typography>
+                                <Typography variant="body2" color="text.secondary">Purchase Order Payment Overview</Typography>
+                              </Box>
+
+                              {/* Stats Cards */}
+                              <Grid container spacing={2} sx={{ mb: 3 }}>
+                                <Grid item xs={12} md={4}>
+                                  <Card sx={{ p: 1.5, bgcolor: '#e8f5e9', borderLeft: '4px solid #4caf50' }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                                      Paid
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#2e7d32' }}>
+                                        {purchaseOrders.filter(po => po.payment_status === 'Paid this month').length}
+                                      </Typography>
+                                      <Typography variant="body2" color="text.secondary">orders</Typography>
+                                    </Box>
+                                    <Typography variant="body1" sx={{ mt: 0.5, color: '#2e7d32', fontWeight: 600 }}>
+                                      {formatCurrency(
+                                        purchaseOrders.filter(po => po.payment_status === 'Paid this month')
+                                          .reduce((sum, po) => sum + po.total_amount, 0)
+                                      )}
+                                    </Typography>
+                                  </Card>
+                                </Grid>
+                                <Grid item xs={12} md={4}>
+                                  <Card sx={{ p: 1.5, bgcolor: '#ffebee', borderLeft: '4px solid #f44336' }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                                      Unpaid
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#c62828' }}>
+                                        {purchaseOrders.filter(po => po.payment_status !== 'Paid this month').length}
+                                      </Typography>
+                                      <Typography variant="body2" color="text.secondary">orders</Typography>
+                                    </Box>
+                                    <Typography variant="body1" sx={{ mt: 0.5, color: '#c62828', fontWeight: 600 }}>
+                                      {formatCurrency(
+                                        purchaseOrders.filter(po => po.payment_status !== 'Paid this month')
+                                          .reduce((sum, po) => sum + po.total_amount, 0)
+                                      )}
+                                    </Typography>
+                                  </Card>
+                                </Grid>
+                                <Grid item xs={12} md={4}>
+                                  <Card sx={{ p: 1.5, bgcolor: '#e3f2fd', borderLeft: '4px solid #2196f3' }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                                      Total Orders
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#1565c0' }}>
+                                        {purchaseOrders.length}
+                                      </Typography>
+                                      <Typography variant="body2" color="text.secondary">orders</Typography>
+                                    </Box>
+                                    <Typography variant="body1" sx={{ mt: 0.5, color: '#1565c0', fontWeight: 600 }}>
+                                      {formatCurrency(purchaseOrders.reduce((sum, po) => sum + po.total_amount, 0))}
+                                    </Typography>
+                                  </Card>
+                                </Grid>
+                              </Grid>
+
+                              {/* Breakdown Table */}
+                              <Card sx={{ p: 2 }}>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Detailed Breakdown</Typography>
+                                <TableContainer>
+                                  <Table size="small">
+                                    <TableHead>
+                                      <TableRow>
+                                        <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>Count</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>Total Amount</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>Percentage</TableCell>
+                                      </TableRow>
+                                    </TableHead>
+                                    <TableBody>
+                                      <TableRow>
+                                        <TableCell>
+                                          <Chip label="Paid this month" size="small" color="success" sx={{ minWidth: 100 }} />
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.filter(po => po.payment_status === 'Paid this month').length}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {formatCurrency(
+                                            purchaseOrders.filter(po => po.payment_status === 'Paid this month')
+                                              .reduce((sum, po) => sum + po.total_amount, 0)
+                                          )}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.length > 0
+                                            ? ((purchaseOrders.filter(po => po.payment_status === 'Paid this month').length / purchaseOrders.length) * 100).toFixed(1)
+                                            : 0}%
+                                        </TableCell>
+                                      </TableRow>
+                                      <TableRow>
+                                        <TableCell>
+                                          <Chip label="Partially Paid" size="small" color="warning" sx={{ minWidth: 100 }} />
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.filter(po => po.payment_status === 'Partially Paid').length}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {formatCurrency(
+                                            purchaseOrders.filter(po => po.payment_status === 'Partially Paid')
+                                              .reduce((sum, po) => sum + po.total_amount, 0)
+                                          )}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.length > 0
+                                            ? ((purchaseOrders.filter(po => po.payment_status === 'Partially Paid').length / purchaseOrders.length) * 100).toFixed(1)
+                                            : 0}%
+                                        </TableCell>
+                                      </TableRow>
+                                      <TableRow>
+                                        <TableCell>
+                                          <Chip label="Unpaid" size="small" color="error" sx={{ minWidth: 100 }} />
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.filter(po => po.payment_status === 'Unpaid').length}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {formatCurrency(
+                                            purchaseOrders.filter(po => po.payment_status === 'Unpaid')
+                                              .reduce((sum, po) => sum + po.total_amount, 0)
+                                          )}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.length > 0
+                                            ? ((purchaseOrders.filter(po => po.payment_status === 'Unpaid').length / purchaseOrders.length) * 100).toFixed(1)
+                                            : 0}%
+                                        </TableCell>
+                                      </TableRow>
+                                      <TableRow>
+                                        <TableCell>
+                                          <Chip label="To be paid next month" size="small" color="info" sx={{ minWidth: 100 }} />
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.filter(po => po.payment_status === 'To be paid next month').length}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {formatCurrency(
+                                            purchaseOrders.filter(po => po.payment_status === 'To be paid next month')
+                                              .reduce((sum, po) => sum + po.total_amount, 0)
+                                          )}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {purchaseOrders.length > 0
+                                            ? ((purchaseOrders.filter(po => po.payment_status === 'To be paid next month').length / purchaseOrders.length) * 100).toFixed(1)
+                                            : 0}%
+                                        </TableCell>
+                                      </TableRow>
+                                      <TableRow sx={{ bgcolor: '#f5f5f5' }}>
+                                        <TableCell sx={{ fontWeight: 600 }}>Total</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>{purchaseOrders.length}</TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>
+                                          {formatCurrency(purchaseOrders.reduce((sum, po) => sum + po.total_amount, 0))}
+                                        </TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 600 }}>100%</TableCell>
+                                      </TableRow>
+                                    </TableBody>
+                                  </Table>
+                                </TableContainer>
+                              </Card>
+                            </Box>
+          ) : selectedPaymentPO && paymentPODetails ? (
                           <Paper sx={{ p: 3 }}>
                             <Grid container spacing={3}>
                               <Grid item xs={12}>
@@ -1650,7 +2155,7 @@ const Suppliers: React.FC = () => {
                               </Grid>
 
                               <Grid item xs={12} sm={6}>
-                                <FormControl fullWidth>
+                                <FormControl fullWidth size="small">
                                   <InputLabel>Payment Method</InputLabel>
                                   <Select
                                     value={paymentMethod}
@@ -1669,7 +2174,8 @@ const Suppliers: React.FC = () => {
                                   fullWidth
                                   label="Payment Notes"
                                   multiline
-                                  rows={3}
+                                  rows={2}
+                                  size="small"
                                   value={paymentNotes}
                                   onChange={(e) => setPaymentNotes(e.target.value)}
                                   placeholder="Reference number, check number, etc."
@@ -1726,7 +2232,16 @@ const Suppliers: React.FC = () => {
                               </Grid>
                             </Grid>
                           </Paper>
-                        )}
+                          ) : (
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                              <Typography variant="body1" color="text.secondary">
+                                {purchaseOrders.filter(po => po.payment_status !== 'Paid this month').length > 0
+                                  ? 'Select a purchase order from the left to make payment'
+                                  : 'No purchase orders requiring payment'}
+                              </Typography>
+                            </Box>
+                          )}
+                        </Box>
                       </Box>
                     )}
 
@@ -1749,278 +2264,6 @@ const Suppliers: React.FC = () => {
               </Card>
             </Grid>
           </Grid>
-        )}
-        
-        {/* OLD TABLE VIEW - Remove or comment out */}
-        {false && activeTab === 0 && (
-          <Card>
-            <Box>
-              <Paper sx={{ p: 2, borderRadius: 2, bgcolor: '#fff', mb: 2, boxShadow: 'none' }} elevation={0}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                  <Typography variant="subtitle1" sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Supplier Directory</Typography>
-                  <Box>
-                    <Tooltip title="Customize columns">
-                      <IconButton size="small" onClick={openColumnsMenu}>
-                        <ExpandMoreIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                </Box>
-
-                <TableContainer sx={{
-                  border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden'
-                }}>
-                  <Box sx={{
-                    maxHeight: 600,
-                    overflow: 'auto',
-                    '&::-webkit-scrollbar': { width: 1, height: 1 },
-                    '&::-webkit-scrollbar-track': { background: 'transparent' },
-                    '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.28)', borderRadius: 999, minHeight: 20 },
-                    scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,0,0,0.28) transparent'
-                  }}>
-                    <Table stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.5 }, '& .MuiTableRow-root.MuiTableRow-head': { height: 48 }, '& .MuiTableRow-root': { height: 48 } }}>
-                      <TableHead>
-                        <TableRow sx={{ height: 48 }}>
-                          <TableCell sx={{ ...headerCellSx, py: 0.5, width: 48 }}>
-                            <Checkbox
-                              checked={suppliers.length > 0 && selectedItems.length === suppliers.length}
-                              indeterminate={selectedItems.length > 0 && selectedItems.length < suppliers.length}
-                              onChange={() => {
-                                if (selectedItems.length === suppliers.length) setSelectedItems([]);
-                                else setSelectedItems(suppliers.map(s => s.id));
-                              }}
-                              inputProps={{ 'aria-label': 'select all suppliers' }}
-                            />
-                          </TableCell>
-
-                          {columnOrder.map(col => {
-                            // the 'actions' column is rendered as a special sticky cell at the far right;
-                            // skip it when iterating columnOrder so we don't render a duplicate scrollable Actions column
-                            if (col === 'actions') return null;
-                            if (!visibleColumns[col]) return null;
-                            const rawLabel = col.replace(/_/g, ' ');
-                            const label = rawLabel.replace(/\b\w/g, (m: string) => m.toUpperCase());
-                            return (
-                              <TableCell key={col} sx={{ ...headerCellSx, py: 0.5, ...truncateSx }}>
-                                {label === 'Name' ? 'Company Name' : label}
-                              </TableCell>
-                            );
-                          })}
-
-                          <TableCell sx={{
-                            top: 0,
-                            position: 'sticky',
-                            right: 0,
-                            backgroundColor: '#f7f7f7',
-                            zIndex: 1200,
-                            borderLeft: '1px solid', borderColor: 'divider',
-                            whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pr: 0, py: 0.5,
-                            height: 48,
-                            minHeight: 48,
-                            width: 120,
-                            '& .MuiIconButton-root': { height: 32, width: 32, p: 0 }
-                          }}>
-                            <Box sx={{ mr: 1 }}>Actions</Box>
-                            <IconButton size="small" onClick={openColumnsMenu} sx={{ p: 0 }} aria-label="Columns">
-                              {/* use same vertical more icon as Inventory */}
-                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      </TableHead>
-
-                      <TableBody>
-                        {suppliers.length === 0 && !loading && (
-                          <TableRow>
-                            <TableCell colSpan={columnOrder.filter(col => visibleColumns[col]).length + 2} sx={{ textAlign: 'center', py: 4 }}>
-                              <Typography variant="body1" color="text.secondary">
-                                No suppliers found
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                                {statusFilter === 'active' ? 'No active suppliers' : 'No suppliers match your criteria'}
-                              </Typography>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                        {suppliers.map(item => (
-                          <TableRow key={item.id} hover sx={{ height: 48 }}>
-                            <TableCell sx={{ ...cellSx, py: 0.5 }}>
-                              <Checkbox
-                                checked={(selectedItems as number[]).includes(item.id)}
-                                onChange={() => {
-                                  setSelectedItems(prev => {
-                                    const set = new Set(prev as number[]);
-                                    if (set.has(item.id)) set.delete(item.id);
-                                    else set.add(item.id);
-                                    return Array.from(set);
-                                  });
-                                }}
-                                inputProps={{ 'aria-label': `select ${item.name}` }}
-                              />
-                            </TableCell>
-
-                            {columnOrder.map(col => {
-                              if (!visibleColumns[col]) return null;
-                              switch (col) {
-                                case 'name':
-                                  return (
-                                    <TableCell key={col} sx={{ ...cellSx, py: 0.5, ...truncateSx }}>
-                                            <Button
-                                              variant="text"
-                                              color="primary"
-                                              onClick={() => openSupplierTab(item.id, item.name)}
-                                              sx={{ textTransform: 'none', p: 0, minWidth: 0, justifyContent: 'flex-start', ...truncateSx }}
-                                              title={item.name}
-                                            >
-                                              {item.name}
-                                            </Button>
-                                    </TableCell>
-                                  );
-                                case 'contact_person':
-                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.contact_person}</TableCell>;
-                                case 'email':
-                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.email}</TableCell>;
-                                case 'phone':
-                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.phone}</TableCell>;
-                                case 'city':
-                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.city}</TableCell>;
-                                case 'state':
-                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.state}</TableCell>;
-                                case 'total_orders':
-                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.total_orders}</TableCell>;
-                                case 'total_purchased':
-                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{formatCurrency(item.total_purchased || 0)}</TableCell>;
-                                case 'last_order_date':
-                                  return <TableCell key={col} sx={{ ...cellSx, ...truncateSx }}>{item.last_order_date ? formatDate(item.last_order_date) : 'Never'}</TableCell>;
-                                case 'is_active':
-                                  return (
-                                    <TableCell key={col} sx={cellSx}>
-                                      <Chip label={item.is_active ? 'Active' : 'Inactive'} color={item.is_active ? 'success' : 'default'} size="small" />
-                                    </TableCell>
-                                  );
-                                default:
-                                  return null;
-                              }
-                            })}
-
-                            <TableCell sx={{
-                              position: 'sticky', right: 0, backgroundColor: 'background.paper', zIndex: 1400, WebkitBackgroundClip: 'padding-box', backgroundClip: 'padding-box', boxShadow: '-6px 0 12px rgba(0,0,0,0.04)', borderLeft: '1px solid', borderColor: 'divider', py: 0.5,
-                              display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'center', '& .MuiIconButton-root': { height: 32, width: 32, p: 0 },
-                                // keep action cell aligned with row height and allow pointer events
-                                height: 48,
-                                minHeight: 48,
-                                width: 120,
-                                pointerEvents: 'auto',
-                                pr: 0
-                            }}>
-                              {/* View Details removed per UI parity request */}
-                              <Tooltip title="Edit">
-                                <IconButton size="small" onClick={() => { setEditingSupplier(item); setSupplierDialog(true); }} disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}>
-                                  <EditIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="Delete">
-                                <IconButton size="small" onClick={() => { setSelectedSupplier(item); setDeleteDialog(true); }} disabled={!user || user.role !== 'admin'}>
-                                  <DeleteIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </Box>
-                </TableContainer>
-              </Paper>
-
-              <Menu
-                anchorEl={columnsMenuAnchor}
-                open={columnsMenuOpen}
-                onClose={closeColumnsMenu}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-                PaperProps={{ sx: { minWidth: 130, maxWidth: 320, p: 0.2, fontFamily: 'inherit', fontSize: '14px', '&, & *': { fontFamily: 'inherit', fontSize: '14px' } } }}
-                MenuListProps={{ sx: { width: 'auto', pr: 0, pl: .2, fontSize: '14px', '&, & *': { fontFamily: 'inherit', fontSize: '14px' }, '& .MuiListItem-root': { py: 0 }, '& .MuiFormControlLabel-label': { fontSize: '14px', fontFamily: 'inherit' } } }}
-              >
-                <Box sx={{ p: .75, pt: 0 }}>
-                  <RadioGroup
-                    value={Object.values(visibleColumns).every(Boolean) ? 'all' : 'custom'}
-                    onChange={(e) => {/* no-op for now */}}
-                    sx={{ display: 'flex', flexDirection: 'column', gap: 0, alignItems: 'flex-start', pl: .25 }}
-                  >
-                    <FormControlLabel value="default" control={<Radio size="small" />} label="Default" onClick={() => { setDefaultColumns(); closeColumnsMenu(); }} sx={{ width: '100%', mb: 0, '& .MuiFormControlLabel-label': { fontSize: '14px', fontFamily: 'inherit', ml: 0 } }} />
-                    <FormControlLabel value="all" control={<Radio size="small" />} label="All" onClick={() => { setAllColumns(true); closeColumnsMenu(); }} sx={{ width: '100%', mb: 0, '& .MuiFormControlLabel-label': { fontSize: '14px', fontFamily: 'inherit', ml: 0 } }} />
-                    <FormControlLabel value="custom" control={<Radio size="small" />} label="Customize" sx={{ width: '100%', mb: 0, '& .MuiFormControlLabel-label': { fontSize: '14px', fontFamily: 'inherit', ml: 0 } }} />
-                  </RadioGroup>
-                </Box>
-                <Divider />
-                <Box sx={{ maxHeight: 320, overflow: 'auto', '&::-webkit-scrollbar': { width: 1, height: 1 }, '&::-webkit-scrollbar-track': { background: 'transparent' }, '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.18)', borderRadius: 999, minHeight: 12 }, '&::-webkit-scrollbar-corner': { background: 'transparent' }, scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,0,0,0.18) transparent' }}>
-                  <List dense sx={{ py: 0, '&::-webkit-scrollbar': { width: .1, height: .1 }, '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.22)', borderRadius: 999, minHeight: 16 }, '&::-webkit-scrollbar-track': { background: 'transparent' }, scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,0,0,0.22) transparent' }}>
-                    {columnOrder.map((colKey) => (
-                      <ListItem
-                        key={colKey}
-                        draggable
-                        onDragStart={(e) => onDragStart(e, colKey)}
-                        onDragOver={(e) => onDragOver(e, colKey)}
-                        onDrop={onDrop}
-                        onDragEnd={onDragEndNative}
-                        sx={{ display: 'flex', alignItems: 'center', cursor: 'default', gap: 0, px: .75, py: 0 }}
-                      >
-                        <Box sx={{ color: 'action.disabled', cursor: 'grab', display: 'flex', alignItems: 'center', mr: 0, transform: 'translateY(1px)' }}>
-                          <DragIndicatorIcon fontSize="small" sx={{ opacity: 0.9 }} />
-                        </Box>
-                        <Checkbox checked={!!visibleColumns[colKey]} onChange={() => toggleColumn(colKey)} size="medium" disableRipple sx={{ ml: 0, mr: 0, transform: 'scale(0.98)', '& .MuiSvgIcon-root': { fontSize: 20 }, '&.Mui-focusVisible, &:focus-visible': { boxShadow: 'none', outline: 'none' } }} inputProps={{ 'aria-label': `${colKey.replace(/_/g, ' ')} visible` }} />
-                        <Typography sx={{ flex: 1, ml: 0, textTransform: 'none', fontWeight: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'inherit', fontSize: '14px' }}>{colKey.replace(/_/g, ' ')}</Typography>
-                      </ListItem>
-                    ))}
-                  </List>
-                </Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1 }}>
-                  <Button size="small" onClick={resetColumnOrderToDefault}>Reset</Button>
-                  <Button size="small" onClick={closeColumnsMenu}>Done</Button>
-                </Box>
-              </Menu>
-            </Box>
-          </Card>
-        )}
-
-        {/* Supplier product tabs area */}
-        {activeTab >= 1 && activeSupplierTabIndex !== null && supplierTabs[activeSupplierTabIndex] && (
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>{supplierTabs[activeSupplierTabIndex].name} — Products</Typography>
-              <TableContainer component={Paper}>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Product</TableCell>
-                      <TableCell>SKU</TableCell>
-                      <TableCell align="right">Cost</TableCell>
-                      <TableCell align="right">Selling Price</TableCell>
-                      <TableCell>Status</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {(supplierProducts[supplierTabs[activeSupplierTabIndex].id] || []).map((product: any) => (
-                      <TableRow key={product.id}>
-                        <TableCell>
-                          <Typography variant="body2" fontWeight="bold">{product.name}</Typography>
-                          {product.brand && <Typography variant="caption" color="text.secondary">{product.brand}</Typography>}
-                        </TableCell>
-                        <TableCell>{product.sku}</TableCell>
-                        <TableCell align="right">{formatCurrency(product.cost_price)}</TableCell>
-                        <TableCell align="right">{formatCurrency(product.selling_price)}</TableCell>
-                        <TableCell>
-                          <Chip label={product.is_active ? 'Active' : 'Inactive'} color={product.is_active ? 'success' : 'default'} size="small" />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </CardContent>
-          </Card>
-        )}
 
         {/* Add/Edit Supplier Dialog */}
         <Dialog open={supplierDialog} onClose={() => setSupplierDialog(false)} maxWidth="md" fullWidth>
@@ -2728,9 +2971,38 @@ const Suppliers: React.FC = () => {
               <Button 
                 variant="contained"
                 startIcon={<InventoryIcon />}
-                onClick={() => {
+                onClick={async () => {
                   setPoDetailDialog(false);
-                  handleOpenReceiveDialog(selectedPO);
+                  if (selectedPO) {
+                    setRightTab(1);
+                    setSelectedReceivePO(selectedPO.id);
+                    
+                    // Fetch PO items for the Receive Items tab
+                    try {
+                      setLoading(true);
+                      const response = await axios.get(`/api/purchase-orders/${selectedPO.id}`);
+                      const poData = response.data;
+                      
+                      const items = poData.items.map((item: any) => ({
+                        id: item.id,
+                        product_id: item.product_id,
+                        product_name: item.product_name,
+                        ordered_quantity: item.quantity,
+                        received_quantity: item.received_quantity || 0,
+                        unit_price: item.unit_cost,
+                        actual_price: item.unit_cost,
+                        to_receive: Math.max(0, item.quantity - (item.received_quantity || 0)),
+                        checked: false
+                      }));
+                      
+                      setReceivePOItems(items);
+                    } catch (error) {
+                      console.error('Failed to fetch PO items:', error);
+                      showNotification('Failed to load purchase order items', 'error');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }
                 }}
                 disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
                 color="primary"
@@ -2742,9 +3014,24 @@ const Suppliers: React.FC = () => {
               <Button 
                 variant="contained"
                 startIcon={<PaymentIcon />}
-                onClick={() => {
+                onClick={async () => {
                   setPoDetailDialog(false);
-                  handleOpenReceiveDialog(selectedPO);
+                  if (selectedPO) {
+                    setSelectedPaymentPO(selectedPO.id);
+                    setRightTab(2);
+                    // Fetch PO details for payment
+                    try {
+                      setLoading(true);
+                      const response = await axios.get(`/api/purchase-orders/${selectedPO.id}`);
+                      setPaymentPODetails(response.data);
+                      setPaymentAmount(response.data.total_amount - (response.data.paid_amount || 0));
+                    } catch (error) {
+                      console.error('Failed to fetch PO details:', error);
+                      showNotification('Failed to load purchase order details', 'error');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }
                 }}
                 disabled={!user || (user.role !== 'admin' && user.role !== 'manager')}
                 color="success"
@@ -2832,6 +3119,7 @@ const Suppliers: React.FC = () => {
                     <Grid item xs={12} sm={4}>
                       <TextField
                         fullWidth
+                        size="small"
                         label="Payment Amount"
                         type="number"
                         value={paymentAmount}
@@ -2842,7 +3130,7 @@ const Suppliers: React.FC = () => {
                       />
                     </Grid>
                     <Grid item xs={12} sm={4}>
-                      <FormControl fullWidth>
+                      <FormControl fullWidth size="small">
                         <InputLabel>Payment Method</InputLabel>
                         <Select
                           value={paymentMethod}
@@ -2856,16 +3144,44 @@ const Suppliers: React.FC = () => {
                       </FormControl>
                     </Grid>
                     <Grid item xs={12} sm={4}>
-                      <Typography variant="body2" color="text.secondary">
-                        Total PO Amount
-                      </Typography>
-                      <Typography variant="h6">
-                        {formatCurrency(selectedPO?.total_amount || 0)}
-                      </Typography>
+                      <Box
+                        sx={{
+                          position: 'relative',
+                          bgcolor: 'grey.50',
+                          borderRadius: 1,
+                          border: '1px solid',
+                          borderColor: 'grey.300',
+                          height: '40px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          px: 1.75,
+                          pt: 1.25,
+                          pb: 0.5
+                        }}
+                      >
+                        <Typography 
+                          variant="caption" 
+                          sx={{ 
+                            position: 'absolute',
+                            top: '-9px',
+                            left: '10px',
+                            bgcolor: 'grey.50',
+                            px: 0.5,
+                            fontSize: '0.75rem',
+                            color: 'text.secondary'
+                          }}
+                        >
+                          Total PO Amount
+                        </Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: 'primary.main', fontSize: '0.875rem' }}>
+                          {formatCurrency(selectedPO?.total_amount || 0)}
+                        </Typography>
+                      </Box>
                     </Grid>
                     <Grid item xs={12}>
                       <TextField
                         fullWidth
+                        size="small"
                         label="Payment Notes (Optional)"
                         multiline
                         rows={2}
@@ -2906,6 +3222,60 @@ const Suppliers: React.FC = () => {
                 : receivingItems.some(item => item.receiving_now > 0)
                 ? 'Receive Items'
                 : 'Record Payment'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Close Purchase Order Dialog */}
+        <Dialog open={closePODialog} onClose={() => setClosePODialog(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>
+            Close Purchase Order
+          </DialogTitle>
+          <DialogContent>
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              <Typography variant="body2">
+                This will mark the purchase order as complete even if not all items have been received.
+                Use this when the supplier cannot fulfill the remaining items.
+              </Typography>
+            </Alert>
+            {poToClose && (
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  PO: {poToClose.po_number}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Supplier: {poToClose.supplier_name}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Status: {poToClose.receiving_status}
+                </Typography>
+              </Box>
+            )}
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Reason for closing (optional)"
+              placeholder="e.g., Supplier out of stock, discontinued item, etc."
+              value={closePOReason}
+              onChange={(e) => setClosePOReason(e.target.value)}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => {
+              setClosePODialog(false);
+              setPoToClose(null);
+              setClosePOReason('');
+            }}>
+              Cancel
+            </Button>
+            <Button 
+              variant="contained"
+              color="warning"
+              onClick={handleClosePO}
+              disabled={loading}
+            >
+              Close Purchase Order
             </Button>
           </DialogActions>
         </Dialog>

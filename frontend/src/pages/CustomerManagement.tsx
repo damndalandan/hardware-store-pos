@@ -14,7 +14,16 @@ import {
   Tab,
   Chip,
   Paper,
-  Divider
+  Divider,
+  Card,
+  CardContent,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
+  Tooltip,
+  InputAdornment,
+  Badge
 } from '@mui/material';
 import {
   Payment as PaymentIcon,
@@ -23,12 +32,16 @@ import {
   Edit as EditIcon,
   History as HistoryIcon,
   PeopleAlt as AllCustomersIcon,
-  AccountBalance as ARIcon
+  AccountBalance as ARIcon,
+  Search as SearchIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
 import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid';
 import PageContainer from '../components/common/PageContainer';
 import { useNotification } from '../hooks/useNotification';
 import axios from 'axios';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 // Unified Customer Interface (includes A/R data if applicable)
 interface Customer {
@@ -76,7 +89,6 @@ interface PurchaseHistory {
 }
 
 const CustomerManagement: React.FC = () => {
-  const [tabValue, setTabValue] = useState(0);
   const { showNotification } = useNotification();
 
   // Unified Customers State
@@ -111,13 +123,11 @@ const CustomerManagement: React.FC = () => {
   const fetchCustomers = async () => {
     setLoading(true);
     try {
-      const endpoint = tabValue === 0 ? '/api/customers' : '/api/customers/with-ar';
-      const response = await axios.get(endpoint, {
+      const response = await axios.get(`${API_BASE_URL}/customers/with-ar`, {
         params: {
           page: page + 1,
           limit: pageSize,
-          search: search || undefined,
-          hasArOnly: tabValue === 1 // Filter only customers with A/R accounts for tab 2
+          search: search || undefined
         },
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`
@@ -132,39 +142,47 @@ const CustomerManagement: React.FC = () => {
     }
   };
 
-  // Fetch data when tab changes or page changes
+  // Fetch data when page changes
   useEffect(() => {
     fetchCustomers();
-  }, [tabValue, page, pageSize, search]);
+  }, [page, pageSize, search]);
 
   // Regular Customer Handlers
   const handleSaveCustomer = async () => {
+    
     if (!editingCustomer?.customer_name?.trim()) {
       showNotification('Customer name is required', 'error');
       return;
     }
 
     try {
+      setLoading(true);
       if (editingCustomer.id) {
-        await axios.put(`/api/customers/${editingCustomer.id}`, editingCustomer, {
+        await axios.put(`${API_BASE_URL}/customers/${editingCustomer.id}`, editingCustomer, {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
         });
         showNotification('Customer updated successfully', 'success');
       } else {
-        await axios.post('/api/customers/find-or-create', {
-          customerName: editingCustomer.customer_name,
+        const response = await axios.post(`${API_BASE_URL}/customers`, {
+          customer_name: editingCustomer.customer_name,
           phone: editingCustomer.phone,
-          email: editingCustomer.email
+          email: editingCustomer.email,
+          address: editingCustomer.address,
+          notes: editingCustomer.notes
         }, {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
         });
+        console.log('Customer created:', response.data);
         showNotification('Customer added successfully', 'success');
       }
       setCustomerDialogOpen(false);
       setEditingCustomer(null);
-      fetchCustomers();
+      await fetchCustomers();
     } catch (error: any) {
+      console.error('Error saving customer:', error);
       showNotification(error.response?.data?.message || 'Failed to save customer', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -172,7 +190,7 @@ const CustomerManagement: React.FC = () => {
     setSelectedCustomer(customer);
     setCustomerHistoryDialogOpen(true);
     try {
-      const response = await axios.get(`/api/customers/${customer.id}/history`, {
+      const response = await axios.get(`${API_BASE_URL}/customers/${customer.id}/history`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
       setPurchaseHistory(response.data.sales || []);
@@ -186,7 +204,7 @@ const CustomerManagement: React.FC = () => {
     setSelectedCustomer(customer);
     setArTransactionsDialogOpen(true);
     try {
-      const response = await axios.get(`/api/customers/${customer.id}/ar-transactions`, {
+      const response = await axios.get(`${API_BASE_URL}/customers/${customer.id}/ar-transactions`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
       
@@ -208,7 +226,7 @@ const CustomerManagement: React.FC = () => {
   // Refresh customer data after payment
   const refreshCustomerData = async (customerId: number) => {
     try {
-      const response = await axios.get(`/api/customers/${customerId}/ar-transactions`, {
+      const response = await axios.get(`${API_BASE_URL}/customers/${customerId}/ar-transactions`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
       
@@ -237,7 +255,7 @@ const CustomerManagement: React.FC = () => {
     if (!selectedCustomer) return;
 
     try {
-      const response = await axios.post(`/api/customers/${selectedCustomer.id}/ar-transactions`, {
+      const response = await axios.post(`${API_BASE_URL}/customers/${selectedCustomer.id}/ar-transactions`, {
         transactionType: 'payment',
         amount: parseFloat(paymentForm.amount),
         paymentMethod: 'CASH',
@@ -268,7 +286,7 @@ const CustomerManagement: React.FC = () => {
     }
 
     try {
-      const response = await axios.post(`/api/customers/${selectedCustomer.id}/ar-transactions`, {
+      const response = await axios.post(`${API_BASE_URL}/customers/${selectedCustomer.id}/ar-transactions`, {
         transactionType: 'payment',
         amount: paymentAmount,
         paymentMethod: 'CASH',
@@ -451,58 +469,346 @@ const CustomerManagement: React.FC = () => {
   ];
 
   return (
-    <PageContainer>
-      {/* Tabs - Sales Style */}
-      <Box sx={{ mb: 3 }}>
-        <Tabs value={tabValue} onChange={(_, newValue) => setTabValue(newValue)}>
-          <Tab label="All Customers" icon={<AllCustomersIcon />} />
-          <Tab label="A/R Customers" icon={<ARIcon />} />
-        </Tabs>
-      </Box>
+    <Box
+      sx={{
+        p: 3,
+        backgroundColor: '#f7f8fa',
+        minHeight: '100vh',
+        '&, & *': { fontSize: '14px !important' },
+        '& .MuiTypography-root': { fontSize: '14px !important' },
+        '& .MuiButton-root': { fontSize: '14px !important' },
+        '& .MuiInputBase-root': { fontSize: '14px !important' }
+      }}
+    >
+      <Grid container spacing={3}>
+        {/* Left Pane - Customer List */}
+        <Grid item xs={12} md={3}>
+          <Card sx={{ height: 'calc(100vh - 50px)', display: 'flex', flexDirection: 'column' }}>
+            <CardContent sx={{ p: 2, pb: 1 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  Customers
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                  <Tooltip title="Add Customer">
+                    <IconButton 
+                      size="small"
+                      onClick={() => {
+                        setEditingCustomer({ customer_name: '' });
+                        setCustomerDialogOpen(true);
+                      }}
+                    >
+                      <PersonAddIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Refresh">
+                    <IconButton 
+                      size="small"
+                      onClick={fetchCustomers}
+                      disabled={loading}
+                    >
+                      <RefreshIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              </Box>
+              
+              {/* Search */}
+              <TextField
+                fullWidth
+                size="small"
+                placeholder="Search customers..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" />
+                    </InputAdornment>
+                  )
+                }}
+                sx={{ mb: 0 }}
+              />
+            </CardContent>
 
-      {/* Search and Actions */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2, gap: 2 }}>
-        <TextField
-          placeholder="Search by name, phone, or email..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          size="small"
-          sx={{ width: 400 }}
-        />
-        {tabValue === 0 && (
-          <Button
-            variant="contained"
-            startIcon={<PersonAddIcon />}
-            onClick={() => {
-              setEditingCustomer({ customer_name: '' });
-              setCustomerDialogOpen(true);
-            }}
-          >
-            Add Customer
-          </Button>
-        )}
-      </Box>
+            {/* Customer List */}
+            <Box sx={{ flex: 1, overflow: 'auto', px: 1 }}>
+              <List dense>
+                {customers.map((customer) => (
+                  <ListItem
+                    key={customer.id}
+                    disablePadding
+                    sx={{ mb: 0 }}
+                  >
+                    <ListItemButton
+                      selected={selectedCustomer?.id === customer.id}
+                      onClick={() => {
+                        setSelectedCustomer(customer);
+                        handleViewCustomerHistory(customer);
+                      }}
+                      sx={{
+                        borderRadius: 1,
+                        '&.Mui-selected': {
+                          backgroundColor: 'primary.light',
+                          '&:hover': {
+                            backgroundColor: 'primary.light',
+                          }
+                        }
+                      }}
+                    >
+                      <ListItemText
+                        primary={
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                              {customer.customer_name}
+                            </Typography>
+                            {customer.customer_code && (
+                              <Badge badgeContent={customer.current_balance && customer.current_balance > 0 ? '₱' : null} color="warning">
+                                <Chip label="A/R" size="small" color="primary" sx={{ height: 18, fontSize: 10 }} />
+                              </Badge>
+                            )}
+                          </Box>
+                        }
+                        secondary={
+                          <Box>
+                            <Typography variant="caption" display="block" color="text.secondary">
+                              {customer.phone || customer.email || 'No contact'}
+                            </Typography>
+                            <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5 }}>
+                              <Chip
+                                label={`₱${Number(customer.total_purchases || 0).toFixed(0)}`}
+                                size="small"
+                                sx={{ height: 20, fontSize: 10 }}
+                              />
+                              {customer.current_balance && customer.current_balance > 0 && (
+                                <Chip
+                                  label={`Owes: ₱${Number(customer.current_balance).toFixed(0)}`}
+                                  size="small"
+                                  color="warning"
+                                  sx={{ height: 20, fontSize: 10 }}
+                                />
+                              )}
+                            </Box>
+                          </Box>
+                        }
+                      />
+                      <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingCustomer(customer);
+                            setCustomerDialogOpen(true);
+                          }}
+                        >
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                    </ListItemButton>
+                  </ListItem>
+                ))}
+              </List>
+            </Box>
+          </Card>
+        </Grid>
 
-      {/* DataGrid */}
-      <DataGrid
-        rows={customers}
-        columns={tabValue === 0 ? allCustomersColumns : arCustomersColumns}
-        paginationModel={{ page, pageSize }}
-        onPaginationModelChange={(model) => {
-          setPage(model.page);
-          setPageSize(model.pageSize);
-        }}
-        pageSizeOptions={[10, 25, 50, 100]}
-        rowCount={total}
-        paginationMode="server"
-        loading={loading}
-        autoHeight
-        disableRowSelectionOnClick
-        sx={{ bgcolor: 'background.paper' }}
-      />
+        {/* Right Pane - Customer Details & Purchase History */}
+        <Grid item xs={12} md={9}>
+          <Card sx={{ height: 'calc(100vh - 50px)', display: 'flex', flexDirection: 'column' }}>
+            {selectedCustomer ? (
+              <>
+                <CardContent sx={{ p: 2, pb: 1 }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                        {selectedCustomer.customer_name}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {selectedCustomer.phone && `${selectedCustomer.phone}`}
+                        {selectedCustomer.phone && selectedCustomer.email && ' • '}
+                        {selectedCustomer.email && `${selectedCustomer.email}`}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<EditIcon />}
+                        onClick={() => {
+                          setEditingCustomer(selectedCustomer);
+                          setCustomerDialogOpen(true);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      {selectedCustomer.customer_code && selectedCustomer.current_balance && selectedCustomer.current_balance > 0 && (
+                        <Button
+                          variant="contained"
+                          size="small"
+                          startIcon={<PaymentIcon />}
+                          onClick={() => handleViewArTransactions(selectedCustomer)}
+                        >
+                          A/R Details
+                        </Button>
+                      )}
+                    </Box>
+                  </Box>
 
+                  {/* Stats Cards */}
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={4}>
+                      <Card sx={{ p: 1.5, bgcolor: '#e8f5e9', borderLeft: '4px solid #4caf50' }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                          Total Purchases
+                        </Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 700, color: '#2e7d32', mt: 0.5 }}>
+                          ₱{Number(selectedCustomer.total_purchases || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          All time
+                        </Typography>
+                      </Card>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <Card sx={{ p: 1.5, bgcolor: '#e3f2fd', borderLeft: '4px solid #2196f3' }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                          Last Purchase
+                        </Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 700, color: '#1565c0', mt: 0.5 }}>
+                          {selectedCustomer.last_purchase_date 
+                            ? new Date(selectedCustomer.last_purchase_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                            : 'Never'}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Recent activity
+                        </Typography>
+                      </Card>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <Card sx={{ 
+                        p: 1.5, 
+                        bgcolor: selectedCustomer.customer_code && selectedCustomer.current_balance && selectedCustomer.current_balance > 0 ? '#fff3e0' : '#f1f8e9', 
+                        borderLeft: '4px solid', 
+                        borderColor: selectedCustomer.customer_code && selectedCustomer.current_balance && selectedCustomer.current_balance > 0 ? '#ff9800' : '#8bc34a' 
+                      }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                          A/R Balance
+                        </Typography>
+                        <Typography variant="h6" sx={{ 
+                          fontWeight: 700, 
+                          color: selectedCustomer.customer_code && selectedCustomer.current_balance && selectedCustomer.current_balance > 0 ? '#e65100' : '#558b2f', 
+                          mt: 0.5 
+                        }}>
+                          ₱{Number(selectedCustomer.current_balance || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {selectedCustomer.customer_code ? `Credit: ₱${Number(selectedCustomer.credit_limit || 0).toFixed(0)}` : 'Cash only'}
+                        </Typography>
+                      </Card>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+
+                <Divider />
+
+                {/* Purchase History Section */}
+                <Box sx={{ p: 2, bgcolor: '#fafafa', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                    Purchase History
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {purchaseHistory.length} transaction{purchaseHistory.length !== 1 ? 's' : ''}
+                  </Typography>
+                </Box>
+
+                {/* Purchase History Table */}
+                <Box sx={{ flex: 1, overflow: 'auto', px: 2 }}>
+                  <DataGrid
+                    rows={purchaseHistory}
+                    columns={[
+                      { 
+                        field: 'sale_date', 
+                        headerName: 'Date', 
+                        width: 150,
+                        valueFormatter: (params) => new Date(params.value).toLocaleDateString('en-US', {
+                          month: '2-digit',
+                          day: '2-digit',
+                          year: 'numeric'
+                        })
+                      },
+                      { 
+                        field: 'sale_number', 
+                        headerName: 'Sale #', 
+                        width: 150
+                      },
+                      { 
+                        field: 'item_count', 
+                        headerName: 'Items', 
+                        width: 80,
+                        type: 'number'
+                      },
+                      { 
+                        field: 'total_amount', 
+                        headerName: 'Amount', 
+                        width: 130,
+                        type: 'number',
+                        valueFormatter: (params) => `₱${Number(params.value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+                      },
+                      { 
+                        field: 'payment_method', 
+                        headerName: 'Payment', 
+                        width: 120,
+                        renderCell: (params: GridRenderCellParams) => (
+                          <Chip
+                            label={params.value}
+                            size="small"
+                            color={params.value === 'CASH' ? 'success' : params.value === 'AR' ? 'warning' : 'default'}
+                          />
+                        )
+                      },
+                      { 
+                        field: 'cashier_username', 
+                        headerName: 'Cashier', 
+                        flex: 1,
+                        minWidth: 120
+                      }
+                    ]}
+                    loading={loading}
+                    autoHeight
+                    disableRowSelectionOnClick
+                    hideFooter
+                    sx={{ border: 'none' }}
+                  />
+                </Box>
+              </>
+            ) : (
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                <Box sx={{ textAlign: 'center', p: 4 }}>
+                  <AllCustomersIcon sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
+                  <Typography variant="h6" color="text.secondary" gutterBottom>
+                    Select a Customer
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Choose a customer from the list to view details and purchase history
+                  </Typography>
+                </Box>
+              </Box>
+            )}
+          </Card>
+        </Grid>
+      </Grid>
+
+      {/* Dialogs */}
       {/* Add/Edit Regular Customer Dialog */}
-      <Dialog open={customerDialogOpen} onClose={() => setCustomerDialogOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog 
+        open={customerDialogOpen} 
+        onClose={() => {
+          setCustomerDialogOpen(false);
+          setEditingCustomer(null);
+        }} 
+        maxWidth="sm" 
+        fullWidth
+      >
         <DialogTitle>{editingCustomer?.id ? 'Edit Customer' : 'Add Customer'}</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
@@ -513,6 +819,13 @@ const CustomerManagement: React.FC = () => {
                 value={editingCustomer?.customer_name || ''}
                 onChange={(e) => setEditingCustomer({ ...editingCustomer, customer_name: e.target.value })}
                 required
+                autoFocus
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && editingCustomer?.customer_name?.trim()) {
+                    e.preventDefault();
+                    handleSaveCustomer();
+                  }
+                }}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -555,13 +868,23 @@ const CustomerManagement: React.FC = () => {
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCustomerDialogOpen(false)}>Cancel</Button>
-          <Button
-            onClick={handleSaveCustomer}
-            variant="contained"
-            disabled={!editingCustomer?.customer_name?.trim()}
+          <Button 
+            onClick={() => {
+              setCustomerDialogOpen(false);
+              setEditingCustomer(null);
+            }}
           >
-            Save
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              console.log('Save button clicked');
+              handleSaveCustomer();
+            }}
+            variant="contained"
+            disabled={!editingCustomer?.customer_name?.trim() || loading}
+          >
+            {loading ? 'Saving...' : 'Save'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -880,7 +1203,7 @@ const CustomerManagement: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
-    </PageContainer>
+    </Box>
   );
 };
 

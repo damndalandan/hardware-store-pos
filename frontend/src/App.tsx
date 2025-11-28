@@ -11,7 +11,6 @@ import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
 import Inventory from './pages/Inventory';
 import Sales from './pages/Sales';
-import POS from './pages/POS';
 import CashierPOS from './pages/CashierPOS';
 import Suppliers from './pages/Suppliers';
 import Reports from './pages/Reports';
@@ -19,7 +18,6 @@ import Users from './pages/Users';
 import LoadingSpinner from './components/LoadingSpinner';
 import OfflineIndicator from './components/OfflineIndicator';
 import Settings from './pages/Settings';
-import PurchaseOrders from './pages/PurchaseOrders';
 import CustomerManagement from './pages/CustomerManagement';
 import Expenses from './pages/Expenses';
 import PettyCash from './pages/PettyCash';
@@ -96,7 +94,7 @@ function App() {
                   } 
                 />
                 <Route path="/suppliers" element={<Suppliers />} />
-                <Route path="/purchase-orders" element={<PurchaseOrders />} />
+
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route 

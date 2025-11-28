@@ -137,7 +137,7 @@ const Users: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [newPassword, setNewPassword] = useState('');
 
-  const API_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+  const API_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
   useEffect(() => {
     loadUsers();
