@@ -203,6 +203,9 @@ async function createTables(): Promise<void> {
       expected_date DATE,
       received_date DATE,
       total_amount DECIMAL(10,2),
+      paid_amount DECIMAL(10,2) DEFAULT 0,
+      payment_status VARCHAR(50) DEFAULT 'Unpaid' CHECK (payment_status IN ('Unpaid', 'Paid this month', 'To be paid next month', 'Partially Paid')),
+      receiving_status VARCHAR(50) DEFAULT 'Awaiting' CHECK (receiving_status IN ('Awaiting', 'Partially Received', 'Received')),
       notes TEXT,
       created_by INT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -224,6 +227,22 @@ async function createTables(): Promise<void> {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders (id),
       FOREIGN KEY (product_id) REFERENCES products (id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // Purchase order payments table
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS purchase_order_payments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      purchase_order_id INT NOT NULL,
+      amount DECIMAL(10,2) NOT NULL,
+      payment_method VARCHAR(50) NOT NULL,
+      payment_date DATE NOT NULL,
+      notes TEXT,
+      created_by INT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders (id),
+      FOREIGN KEY (created_by) REFERENCES users (id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 

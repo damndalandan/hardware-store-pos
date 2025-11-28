@@ -1,6 +1,7 @@
 import { initializeDatabase } from './connection';
 import { seedDatabase } from './seed';
 import { addCustomerIdToSales } from './migrations/addCustomerIdToSales';
+import { addPOPaymentTracking } from './migrations/add-po-payment-tracking';
 import { getPool } from './connection';
 
 async function migrate() {
@@ -12,6 +13,7 @@ async function migrate() {
     console.log('Running migrations...');
     const pool = await getPool();
     await addCustomerIdToSales(pool);
+    await addPOPaymentTracking();
     console.log('Migrations completed successfully');
     
     console.log('Seeding database...');

@@ -21,7 +21,7 @@ import shiftRoutes from './routes/shifts';
 import settingsRoutes from './routes/settings';
 import expensesRoutes from './routes/expenses';
 import pettyCashRoutes from './routes/pettyCash';
-import customerAccountsRoutes from './routes/customerAccounts';
+// import customerAccountsRoutes from './routes/customerAccounts'; // DEPRECATED: Functionality merged into customers.ts
 import customersRoutes from './routes/customers';
 import dailyReportsRoutes from './routes/dailyReports';
 
@@ -91,7 +91,7 @@ app.use('/api/settings', authenticateToken, settingsRoutes);
 app.use('/api/expenses', authenticateToken, expensesRoutes);
 app.use('/api/petty-cash', authenticateToken, pettyCashRoutes);
 app.use('/api/customers', authenticateToken, customersRoutes);
-app.use('/api/customer-accounts', authenticateToken, customerAccountsRoutes);
+// app.use('/api/customer-accounts', authenticateToken, customerAccountsRoutes); // DEPRECATED: Use /api/customers endpoints instead
 app.use('/api/daily-reports', authenticateToken, dailyReportsRoutes);
 
 // Socket.IO for real-time updates

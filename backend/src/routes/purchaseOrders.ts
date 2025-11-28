@@ -146,6 +146,9 @@ router.get('/', requireRole(['admin', 'manager']), asyncHandler(async (req: Auth
       po.expected_date,
       po.received_date,
       po.total_amount,
+      po.paid_amount,
+      po.payment_status,
+      po.receiving_status,
       po.notes,
       po.created_at,
       u.username as created_by_username,
@@ -157,6 +160,7 @@ router.get('/', requireRole(['admin', 'manager']), asyncHandler(async (req: Auth
     ${whereClause}
     GROUP BY po.id, po.po_number, po.supplier_id, s.name, po.status, 
              po.order_date, po.expected_date, po.received_date, po.total_amount, 
+             po.paid_amount, po.payment_status, po.receiving_status,
              po.notes, po.created_at, u.username
     ORDER BY po.created_at DESC
     LIMIT ? OFFSET ?
@@ -307,7 +311,8 @@ router.get('/:id', requireRole(['admin', 'manager']), asyncHandler(async (req: A
   const items = itemRows as any[];
 
   res.json({
-    order: { ...order, items }
+    ...order,
+    items
   });
 }));
 
@@ -349,11 +354,11 @@ router.put('/:id/status', requireRole(['admin', 'manager']), asyncHandler(async 
 // Receive purchase order items
 router.post('/:id/receive', requireRole(['admin', 'manager']), asyncHandler(async (req: AuthenticatedRequest, res: express.Response): Promise<void> => {
   const { id } = req.params;
-  const { items } = req.body; // Array of { product_id, received_quantity }
+  const { items, payment } = req.body; // Array of { purchase_order_item_id, product_id, quantity_received, actual_price }, optional payment object
   const pool = await getPool();
 
-  if (!items || !Array.isArray(items)) {
-    res.status(400).json({ message: 'Items array is required' });
+  if ((!items || !Array.isArray(items) || items.length === 0) && !payment) {
+    res.status(400).json({ message: 'Items array or payment is required' });
     return;
   }
 
@@ -361,69 +366,302 @@ router.post('/:id/receive', requireRole(['admin', 'manager']), asyncHandler(asyn
   try {
     await connection.beginTransaction();
 
-    // Update received quantities for purchase order items
-    for (const item of items) {
-      await connection.execute(`
-        UPDATE purchase_order_items 
-        SET received_quantity = ?
-        WHERE purchase_order_id = ? AND product_id = ?
-      `, [item.received_quantity, id, item.product_id]);
+    let receivingStatus = 'Awaiting';
+    let paymentStatus = 'Unpaid';
+    let newPaidAmount = 0;
 
-      // Update inventory
-      const [inventoryRows] = await connection.execute(`
-        SELECT current_stock FROM inventory WHERE product_id = ? AND (location IS NULL OR location = '')
-      `, [item.product_id]);
-      const existingInventory = (inventoryRows as any[])[0];
+    // Process items if provided
+    if (items && Array.isArray(items) && items.length > 0) {
+      // Validate items before processing
+      for (const item of items) {
+        // Get current item details
+        const [itemDetails] = await connection.execute(`
+          SELECT quantity, received_quantity 
+          FROM purchase_order_items 
+          WHERE id = ?
+        `, [item.purchase_order_item_id]);
+        
+        if (itemDetails && (itemDetails as any[]).length > 0) {
+          const itemData = (itemDetails as any[])[0];
+          const remaining = itemData.quantity - itemData.received_quantity;
+          
+          // Validate: cannot receive more than remaining quantity
+          if (item.quantity_received > remaining) {
+            await connection.rollback();
+            res.status(400).json({ 
+              error: `Cannot receive ${item.quantity_received} units. Only ${remaining} units remaining for this item.` 
+            });
+            return;
+          }
+        }
+      }
+      
+      // Process each item
+      for (const item of items) {
+        // Update received quantity for this specific item
+        await connection.execute(`
+          UPDATE purchase_order_items 
+          SET received_quantity = received_quantity + ?
+          WHERE id = ?
+        `, [item.quantity_received, item.purchase_order_item_id]);
 
-      if (existingInventory) {
+        // Update inventory stock (use inventory table, not products table)
+        const [inventoryRows] = await connection.execute(`
+          SELECT current_stock FROM inventory WHERE product_id = ?
+        `, [item.product_id]);
+        
+        if (inventoryRows && (inventoryRows as any[]).length > 0) {
+          // Update existing inventory record
+          await connection.execute(`
+            UPDATE inventory 
+            SET current_stock = current_stock + ?
+            WHERE product_id = ?
+          `, [item.quantity_received, item.product_id]);
+        } else {
+          // Create new inventory record if it doesn't exist
+          await connection.execute(`
+            INSERT INTO inventory (product_id, current_stock, min_stock_level, location)
+            VALUES (?, ?, 0, 'MAIN')
+          `, [item.product_id, item.quantity_received]);
+        }
+
+        // Add inventory transaction
         await connection.execute(`
-          UPDATE inventory 
-          SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
-          WHERE product_id = ? AND (location IS NULL OR location = '')
-        `, [item.received_quantity, item.product_id]);
-      } else {
-        await connection.execute(`
-          INSERT INTO inventory (product_id, current_stock, location, updated_at)
-          VALUES (?, ?, '', CURRENT_TIMESTAMP)
-        `, [item.product_id, item.received_quantity]);
+          INSERT INTO inventory_transactions (
+            product_id, transaction_type, quantity_change, reference_id, 
+            reference_type, notes, created_by, created_at
+          ) VALUES (?, 'purchase', ?, ?, 'purchase_order', ?, ?, NOW())
+        `, [
+          item.product_id, 
+          item.quantity_received, 
+          id, 
+          `Received ${item.quantity_received} units from PO`,
+          req.user?.id
+        ]);
       }
 
-      // Add inventory transaction
-      await connection.execute(`
-        INSERT INTO inventory_transactions (
-          product_id, transaction_type, quantity_change, reference_id, 
-          reference_type, notes, created_by
-        ) VALUES (?, 'purchase', ?, ?, 'purchase_order', 'Received from PO', ?)
-      `, [item.product_id, item.received_quantity, id, req.user?.id]);
-    }
-
-    // Check if all items are fully received
-    const [pendingRows] = await connection.execute(`
-      SELECT COUNT(*) as pending_count
-      FROM purchase_order_items
-      WHERE purchase_order_id = ? AND (received_quantity < quantity OR received_quantity IS NULL)
-    `, [id]);
-    const pendingItems = (pendingRows as any[])[0];
-
-    if (pendingItems.pending_count === 0) {
-      // Mark order as received
-      await connection.execute(`
-        UPDATE purchase_orders 
-        SET status = 'received', received_date = CURDATE(), updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+      // Calculate receiving status
+      const [itemsRows] = await connection.execute(`
+        SELECT 
+          COUNT(*) as total_items,
+          SUM(CASE WHEN received_quantity >= quantity THEN 1 ELSE 0 END) as fully_received,
+          SUM(CASE WHEN received_quantity > 0 AND received_quantity < quantity THEN 1 ELSE 0 END) as partially_received
+        FROM purchase_order_items
+        WHERE purchase_order_id = ?
       `, [id]);
+      
+      const stats = (itemsRows as any[])[0];
+      
+      // If ALL items are fully received, mark as "Received"
+      if (stats.fully_received === stats.total_items) {
+        receivingStatus = 'Received';
+      } 
+      // If ANY item has been received but not all are complete, mark as "Partially Received"
+      else if (stats.fully_received > 0 || stats.partially_received > 0) {
+        receivingStatus = 'Partially Received';
+      }
     }
+
+    // Process payment if provided
+    if (payment && payment.amount > 0) {
+      // Get PO details
+      const [poRows] = await connection.execute(`
+        SELECT total_amount, COALESCE(paid_amount, 0) as paid_amount FROM purchase_orders WHERE id = ?
+      `, [id]);
+      
+      const po = (poRows as any[])[0];
+      if (!po) {
+        res.status(404).json({ message: 'Purchase order not found' });
+        await connection.rollback();
+        connection.release();
+        return;
+      }
+
+      // Record payment
+      await connection.execute(`
+        INSERT INTO purchase_order_payments (
+          purchase_order_id, amount, payment_method, payment_date, notes, created_by
+        ) VALUES (?, ?, ?, CURDATE(), ?, ?)
+      `, [id, payment.amount, payment.payment_method, payment.notes || '', req.user?.id]);
+
+      // Calculate new paid amount - ensure both values are numbers
+      const currentPaid = Number(po.paid_amount) || 0;
+      const paymentAmt = Number(payment.amount) || 0;
+      newPaidAmount = currentPaid + paymentAmt;
+      
+      // Determine payment status
+      const totalAmt = Number(po.total_amount) || 0;
+      if (newPaidAmount >= totalAmt) {
+        paymentStatus = 'Paid this month';
+      } else if (newPaidAmount > 0) {
+        paymentStatus = 'Partially Paid';
+      }
+    }
+
+    // Update purchase order with both receiving and payment status
+    const updateFields = ['updated_at = NOW()'];
+    const updateParams: any[] = [];
+
+    if (items && items.length > 0) {
+      updateFields.push('receiving_status = ?');
+      updateParams.push(receivingStatus);
+    }
+
+    if (payment && payment.amount > 0) {
+      updateFields.push('paid_amount = ?', 'payment_status = ?');
+      updateParams.push(newPaidAmount, paymentStatus);
+    }
+
+    updateParams.push(id);
+
+    await connection.execute(`
+      UPDATE purchase_orders 
+      SET ${updateFields.join(', ')}
+      WHERE id = ?
+    `, updateParams);
 
     await connection.commit();
     connection.release();
 
-    logger.info(`Purchase order items received: ${id}`, {
+    logger.info(`Purchase order processed: ${id}`, {
       userId: req.user?.id,
       username: req.user?.username,
-      itemsReceived: items.length
+      itemsReceived: items?.length || 0,
+      receivingStatus,
+      paymentAmount: payment?.amount || 0,
+      paymentStatus
     });
 
-    res.json({ message: 'Items received successfully' });
+    res.json({ 
+      message: items && items.length > 0 
+        ? (payment && payment.amount > 0 ? 'Items received and payment recorded successfully' : 'Items received successfully')
+        : 'Payment recorded successfully',
+      receiving_status: receivingStatus,
+      payment_status: paymentStatus,
+      paid_amount: newPaidAmount
+    });
+
+  } catch (error) {
+    await connection.rollback();
+    connection.release();
+    throw error;
+  }
+}));
+
+// Close purchase order (mark as complete even if not fully received)
+router.post('/:id/close', requireRole(['admin', 'manager']), asyncHandler(async (req: AuthenticatedRequest, res: express.Response): Promise<void> => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  const pool = await getPool();
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Update purchase order status
+    await connection.execute(`
+      UPDATE purchase_orders 
+      SET status = 'Closed', receiving_status = 'Received', updated_at = NOW()
+      WHERE id = ?
+    `, [id]);
+
+    // Log the closure
+    logger.info(`Purchase order closed manually: ${id}`, {
+      userId: req.user?.id,
+      username: req.user?.username,
+      reason: reason || 'No reason provided'
+    });
+
+    await connection.commit();
+    connection.release();
+
+    res.json({ 
+      message: 'Purchase order closed successfully',
+      status: 'Closed',
+      receiving_status: 'Received'
+    });
+
+  } catch (error) {
+    await connection.rollback();
+    connection.release();
+    throw error;
+  }
+}));
+
+// Record payment for purchase order
+router.post('/:id/payment', requireRole(['admin', 'manager']), asyncHandler(async (req: AuthenticatedRequest, res: express.Response): Promise<void> => {
+  const { id } = req.params;
+  const { amount, payment_method, notes } = req.body;
+  const pool = await getPool();
+
+  if (!amount || amount <= 0) {
+    res.status(400).json({ message: 'Valid payment amount is required' });
+    return;
+  }
+
+  if (!payment_method) {
+    res.status(400).json({ message: 'Payment method is required' });
+    return;
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Get PO details
+    const [poRows] = await connection.execute(`
+      SELECT total_amount, paid_amount FROM purchase_orders WHERE id = ?
+    `, [id]);
+    
+    const po = (poRows as any[])[0];
+    if (!po) {
+      res.status(404).json({ message: 'Purchase order not found' });
+      await connection.rollback();
+      connection.release();
+      return;
+    }
+
+    // Record payment
+    await connection.execute(`
+      INSERT INTO purchase_order_payments (
+        purchase_order_id, amount, payment_method, payment_date, notes, created_by
+      ) VALUES (?, ?, ?, CURDATE(), ?, ?)
+    `, [id, amount, payment_method, notes || '', req.user?.id]);
+
+    // Calculate new paid amount
+    const newPaidAmount = (po.paid_amount || 0) + amount;
+    
+    // Determine payment status
+    let paymentStatus = 'Unpaid';
+    if (newPaidAmount >= po.total_amount) {
+      paymentStatus = 'Paid this month';
+    } else if (newPaidAmount > 0) {
+      paymentStatus = 'Partially Paid';
+    }
+
+    // Update purchase order
+    await connection.execute(`
+      UPDATE purchase_orders 
+      SET paid_amount = ?, payment_status = ?, updated_at = NOW()
+      WHERE id = ?
+    `, [newPaidAmount, paymentStatus, id]);
+
+    await connection.commit();
+    connection.release();
+
+    logger.info(`Payment recorded for purchase order: ${id}`, {
+      userId: req.user?.id,
+      username: req.user?.username,
+      amount,
+      paymentMethod: payment_method,
+      paymentStatus
+    });
+
+    res.json({ 
+      message: 'Payment recorded successfully',
+      paid_amount: newPaidAmount,
+      payment_status: paymentStatus
+    });
 
   } catch (error) {
     await connection.rollback();
